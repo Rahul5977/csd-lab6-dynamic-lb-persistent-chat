@@ -248,7 +248,20 @@ configuration; the balancer must notice by itself.
 
 {{C_TPUT_LOAD}}
 
-{{A_RT}}
+**Reading the table.** At one user the three configurations are identical (44–46 req/s, p50 ≈ 12 ms):
+a single sequential client is bound by its own round trip Mac → lab → Mac, and no number of backends
+can shorten one request. From ten users upward the backends are the bottleneck and the balancer's
+value is plain: at 10 users **95 → 164 → 225 req/s** (1.7× / 2.4×) with p95 falling from 555 ms to
+197 ms; at 50 users **89 → 177 → 275 req/s** (2.0× / 3.1×) with p95 5.2 s → 1.0 s; at 200 users
+**85 → 189 → 268 req/s** (2.2× / 3.2×) and median response time 772 ms → 217 ms. A single 1-core
+backend saturates at ~90–105 req/s regardless of how many users push it — everything beyond that
+becomes queueing delay (p95 reaches 9 s at 100 users) — while two and three backends move the ceiling
+to ~180 and ~270 req/s. The speed-ups slightly above 3× at 50 and 200 users are within run-to-run
+noise on the shared host (the single-backend runs at those levels happened to land in busier
+minutes); the honest summary is *near-linear scaling, 2.4–3.2× for three backends*. Every run had
+**zero failed requests**, the adaptive algorithm split traffic 49/51 % and 33/34/33 % (it favours
+nobody when the backends are equal), and `Active` confirms the balancer saw exactly the intended
+number of backends throughout each run.
 
 ### 8.2 Throughput vs offered load (open loop)
 
@@ -256,7 +269,20 @@ configuration; the balancer must notice by itself.
 
 {{C_OFFERED}}
 
-{{A_OFFERED}}
+**Reading the table.** In open-loop mode arrivals come at a fixed rate whether or not the system keeps
+up, so the *achieved* curve bends away from the ideal line exactly where the system saturates
+(Figure 3, left) and response time explodes just before it (right). Up to ~80 req/s of real offered
+load all three configurations keep up — throughput follows the ideal line and p95 stays at
+110–215 ms. At ~140 req/s the single backend is already over its knee: p50 352 ms and **p95 8.9 s**
+(a queue that never drains) while two and three backends answer in 231 ms and 181 ms at p95. At
+~230 req/s the single backend collapses — **119 req/s achieved, 41 % of arrivals failed** (2 038,
+of which 797 were shed by the generator's in-flight cap because responses no longer came back), p95
+7.4 s — two backends just cope (205 req/s, 0 failed, but p95 4.5 s: at capacity, queue building) and
+three backends absorb it comfortably (**221 req/s, 0 failed, p95 268 ms**). The offered-load axis
+uses what the generator actually issued: its thread-per-arrival Python implementation tops out at
+~230 arrivals/s, which is why the nominal 300 req/s point is plotted at ~230. Successful/failed
+request counts per point are in the table; the number of active backends was constant within each
+run (`Active` column).
 
 <div class="pagebreak"></div>
 
@@ -276,7 +302,20 @@ per-second samples of `/lb/stats` show exactly when.
 
 {{C_SCALE_EFFECT}}
 
-{{A_SCALE}}
+**How performance changed after each backend was added.** With one backend the system was already
+at its ceiling at 25 users (~95 req/s, p95 ≈ 2.1 s): raising the load to 50 and then 100 users bought
+*no* throughput (105 → 99 req/s) and only pushed queueing delay up — p95 climbed to 4.5 s and then 9 s,
+the classic closed-loop saturation signature (Figure 4, phases A–C). At ~128 s `scale.sh sys3 up` was
+run on sys3; its first registration heartbeat and the balancer's candidate scan both fired within
+5 s, the `active backends` line steps to 2 and — because a never-sampled backend scores 0 — sys3 was
+carrying real traffic in the very next second (share panel: 52 / 47 %). Throughput **doubled to
+~190 req/s** and p95 halved to 4.2 s with the *same* 100 users. Adding sys4 at ~184 s repeated the
+effect: **~285 req/s**, p95 2.4 s, a near-perfect 34 / 34 / 32 % split. Phase F then doubled the load
+to 200 users: throughput held at ~291 req/s (the three cores are now the ceiling) and p95 rose again
+to 5.7 s. Scaling from one to three backends therefore gave **2.9× throughput** (95–105 → 285–291
+req/s) — near-linear, as expected for CPU-bound backends behind a balancer whose own cost is small —
+and no request failed during either addition (0 errors in 300 s). The `added` events in the dashboard
+(screenshot §11) are the balancer's own record of the two admissions.
 
 ### 9.2 Backend failure and recovery under load
 
@@ -284,7 +323,21 @@ per-second samples of `/lb/stats` show exactly when.
 
 {{C_FAIL}}
 
-{{A_FAIL}}
+**Failure.** sys3 was SIGKILLed (no graceful deregister — the worst case) at ~37 s while 100 users
+were active. Requests that were in flight on sys3 at that instant, plus the few that the balancer
+sent before its passive check fired, failed: **36 requests out of 34 927 (0.10 %)**, all inside a
+two-second window. The first connection refusal ejected sys3 immediately (`ejected … passive:
+connect/proxy failure` in the event log — no waiting for a health-check interval), and the active
+probe confirmed it. Throughput fell from ~280 to ~184 req/s and p95 rose from 2.4 s to 4.4 s — exactly
+the two-thirds capacity you expect with two of three cores left — and the share panel shows the load
+redistributed 47 / 53 % over sys2 and sys4 without any further errors. The load generator's sends that
+hit the outage were retried with the same message id; they were stored once (the first attempt never
+reached the database, so the retry is a fresh insert — dedup is verified separately in §6.4).
+**Recovery.** `scale.sh sys3 up` at ~90 s: the backend registered itself, the balancer re-admitted it
+after two successful probes (`readmitted` event, active backends back to 3) and, scoring 0 as a fresh
+backend, it took its third of the traffic at once; throughput returned to ~280 req/s within ten
+seconds. Detection-to-ejection time is bounded by max(passive: first failed connect,
+active: 2 × 3 s + timeout) — in this run it was effectively instantaneous.
 
 ### 9.3 Dynamic selection vs fixed rotation with one loaded backend
 

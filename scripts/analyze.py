@@ -52,6 +52,7 @@ for path in sorted(glob.glob(os.path.join(RAW, "*.json"))):
         "dist": s["backend_distribution"], "active_min": s["active_backends_min"], "active_max": s["active_backends_max"],
         "retried": s.get("sends_retried", 0), "dups": s.get("duplicates_suppressed", 0),
         "dropped": s.get("dropped_arrivals", 0),
+        "offered_actual": round(s["total_requests"] / max(1, s["duration_s"] - s["warmup_s"]), 1),
     })
 if not runs:
     sys.exit("no experiment runs in results/raw/ yet")
@@ -83,6 +84,7 @@ for (cfg, param), rs in groups.items():
         "active": f"{min(x['active_min'] for x in rs)}-{max(x['active_max'] for x in rs)}",
         "retried": sum(x["retried"] for x in rs), "dups": sum(x["dups"] for x in rs),
         "dropped": sum(x["dropped"] for x in rs),
+        "offered_actual": med("offered_actual"),
         "dist_pct": {b: round(n / tot * 100, 1) for b, n in sorted(dist.items())},
         "run_ids": ",".join(x["run_id"] for x in rs),
     })
@@ -134,14 +136,15 @@ open(os.path.join(TABLES, "response_time_vs_load.md"), "w").write("\n".join(line
 
 # ── Table 2: throughput vs offered load ─────────────────────────────────────
 rates = sorted({float(m["param"]) for m in med_rows if m["config"] in ("O1", "O2", "O3")})
-lines = ["| Offered load (req/s) | Backends | Achieved (req/s) | Success | Failed / dropped | Err % | p50 ms | p95 ms | p99 ms | Active | Distribution |",
+lines = ["| Offered load nominal → actual (req/s) | Backends | Achieved (req/s) | Success | Failed (of which dropped) | Err % | p50 ms | p95 ms | p99 ms | Active | Distribution |",
          "|---|---|---|---|---|---|---|---|---|---|---|"]
 for r_ in rates:
     for n in (1, 2, 3):
         m = row(f"O{n}", r_)
         if not m:
             continue
-        lines.append(f"| {r_:g} | {n} | **{m['rps']}** | {m['success']:.0f} | {m['errors']:.0f} / {m['dropped']} | {m['error_pct']} | {m['p50']} | {m['p95']} | {m['p99']} | {m['active']} | {dist_str(m)} |")
+        lines.append(f"| {r_:g} → {m['offered_actual']} | {n} | **{m['rps']}** | {m['success']:.0f} | {m['errors']:.0f} ({m['dropped']}) | {m['error_pct']} | {m['p50']} | {m['p95']} | {m['p99']} | {m['active']} | {dist_str(m)} |")
+lines.append("\n*Actual offered load = arrivals the generator really issued per second (successful + failed + dropped). The thread-per-arrival Python generator on the Mac saturates near 230 arrivals/s, so the nominal 300 req/s setting produced ~220–230 req/s of real offered load.*")
 open(os.path.join(TABLES, "throughput_vs_offered_load.md"), "w").write("\n".join(lines) + "\n")
 
 # ── Table 3: scaling phases (from the SCALE timeline) ──────────────────────
@@ -218,7 +221,7 @@ for r_ in (300.0,):
     for n in (1, 2, 3):
         m = row(f"O{n}", r_)
         if m:
-            lines.append(f"| O: {r_:g} req/s offered | {n} backend(s) | **{m['rps']}** achieved | {m['p50']} | {m['p95']} | {m['errors']:.0f} + {m['dropped']} dropped | {m['active']} |")
+            lines.append(f"| O: {m['offered_actual']} req/s actually offered | {n} backend(s) | **{m['rps']}** achieved | {m['p50']} | {m['p95']} | {m['errors']:.0f} + {m['dropped']} dropped | {m['active']} |")
 for r in scale_rows:
     lines.append(f"| SCALE phase {r['phase']} | {r['active']:.0f} backend(s) | **{r['rps']:.1f}** | {r['p50']:.0f} | {r['p95']:.0f} | — | {r['active']:.0f} |")
 for param in ("adaptive_hog", "round_robin_hog", "least_connections_hog"):
@@ -287,16 +290,19 @@ if levels:
 # 2. throughput vs offered load (open loop)
 if rates:
     fig, ax = plt.subplots(1, 2, figsize=(11, 4.3))
+    def oseries(cfg, key):
+        pts = sorted((m["offered_actual"], m[key]) for m in med_rows if m["config"] == cfg)
+        return [p[0] for p in pts], [p[1] for p in pts]
+    mx = 0
     for n in (1, 2, 3):
-        x, y = series(f"O{n}", "rps")
-        if x: ax[0].plot(x, y, "o-", color=COL[n], label=LAB[n])
-        x, y = series(f"O{n}", "p95")
+        x, y = oseries(f"O{n}", "rps")
+        if x: ax[0].plot(x, y, "o-", color=COL[n], label=LAB[n]); mx = max(mx, max(x))
+        x, y = oseries(f"O{n}", "p95")
         if x: ax[1].plot(x, y, "o-", color=COL[n], label=LAB[n])
-    mx = max(rates)
     ax[0].plot([0, mx], [0, mx], "--", color="#999", label="ideal (achieved = offered)")
-    ax[0].set_xlabel("offered load (req/s, Poisson arrivals)"); ax[0].set_ylabel("achieved throughput (req/s)")
+    ax[0].set_xlabel("actual offered load (req/s, Poisson arrivals)"); ax[0].set_ylabel("achieved throughput (req/s)")
     ax[0].set_title("Throughput vs offered load"); ax[0].grid(alpha=.3); ax[0].legend(fontsize=8)
-    ax[1].set_xlabel("offered load (req/s)"); ax[1].set_ylabel("p95 response time (ms)"); ax[1].set_yscale("log")
+    ax[1].set_xlabel("actual offered load (req/s)"); ax[1].set_ylabel("p95 response time (ms)"); ax[1].set_yscale("log")
     ax[1].set_title("p95 response time vs offered load"); ax[1].grid(alpha=.3, which="both"); ax[1].legend(fontsize=8)
     plt.tight_layout(); plt.savefig(os.path.join(CHARTS, "throughput_vs_offered_load.png"), dpi=150); plt.close()
 
