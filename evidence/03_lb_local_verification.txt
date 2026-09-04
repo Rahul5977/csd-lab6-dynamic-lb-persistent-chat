@@ -1,0 +1,40 @@
+lb test: data in /var/folders/h2/kcd3pbxs39v9b2xsshy5f1380000gn/T/lb6-test-zwm0tiwh
+— 1. app works through the LB (adaptive) —
+  ✓ register through LB
+  ✓ create room through LB
+  ✓ send through LB
+  ✓ duplicate through LB flagged
+  ✓ stats: 1 active backend, adaptive, state UP with EWMA sample
+  ✓ response carries X-LB-Active-Backends
+— 2. new backend self-registers while running —
+  ✓ register with wrong token → 403
+  ✓ b2 admitted by registration within 5 s
+  ✓ event log shows 'added'
+  ✓ traffic now reaches both backends {'b2': 41, 'b1': 19}
+  ✓ active_backends == 2
+— 3. backend discovered by candidate scan (no LB_URL) —
+  ✓ b3 admitted by scan (source=scan)
+  ✓ three-way distribution {'b3': 58, 'b1': 23, 'b2': 9}
+— 4. adaptive scoring: slow backend gets less, is not ejected —
+  ✓ slow b2 gets a small share (10%) while UP: {'b3': 62, 'b1': 73, 'b2': 15}
+  ✓ round_robin ignores latency: b2 share 33% (~33%)
+— 5. failure and recovery —
+  ✓ no client errors while b3 dies (passive ejection + retry): {'b1': 45, 'b2': 15}
+  ✓ b3 marked DOWN
+  ✓ active_backends == 2 during outage
+  ✓ b3 re-admitted after restart (active check)
+  ✓ events: ejected + readmitted logged
+— 6. drain, remove, algorithms —
+  ✓ b2 DRAINING or DOWN after SIGTERM deregister
+  ✓ no traffic to the drained backend: {'b1': 34, 'b3': 6}
+  ✓ DELETE /lb/backends/b2 removes it
+  ✓ algorithm round_robin: 30/30 served {'b3': 15, 'b1': 15}
+  ✓ algorithm least_connections: 30/30 served {'b3': 30}
+  ✓ algorithm weighted_round_robin: 30/30 served {'b1': 15, 'b3': 15}
+  ✓ algorithm ip_hash: 30/30 served {'b1': 30}
+  ✓ algorithm least_response_time: 30/30 served {'b1': 30}
+  ✓ algorithm adaptive: 30/30 served {'b1': 23, 'b3': 7}
+— 7. config-file edit is picked up without restart —
+  ✓ algorithm from edited file applied
+
+ALL TESTS PASSED

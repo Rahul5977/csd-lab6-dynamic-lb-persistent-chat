@@ -26,7 +26,7 @@ REPORT = os.path.join(ROOT, "report")
 ROLL = "12341680"
 md_src = open(os.path.join(REPORT, "report.md")).read()
 
-formatter = HtmlFormatter(linenos="table", cssclass="codehl", style="default")
+formatter = HtmlFormatter(linenos="inline", cssclass="codehl", style="default")
 pygments_css = formatter.get_style_defs(".codehl")
 
 
@@ -90,7 +90,7 @@ repl = {
     "{{C_OFFERED}}": chart("throughput_vs_offered_load.png", "Figure 3 — Throughput vs offered load (open loop, Poisson arrivals); dashed = ideal."),
     "{{C_SCALE}}": chart("scaling_timeline.png", "Figure 4 — Dynamic scaling timeline: throughput, response time, active backends and per-backend share; dashed lines = backend added."),
     "{{C_SCALE_EFFECT}}": chart("scaling_effect.png", "Figure 5 — Effect of adding each backend, per phase of the scaling run."),
-    "{{C_FAIL}}": chart("failover_timeline.png", "Figure 6 — Failure and recovery timeline (sys3 killed at 40 s, restarted at 90 s)."),
+    "{{C_FAIL}}": chart("failover_timeline.png", "Figure 6 — Failure and recovery timeline under 100 users (sys3 SIGKILLed at ~37 s, restarted at ~92 s; dashed = LB ejected / re-admitted)."),
     "{{C_ALGO}}": chart("algorithm_comparison.png", "Figure 7 — Adaptive vs round robin vs least connections when sys3 is CPU-loaded."),
     "{{SCREENSHOTS}}": shots_md,
     "{{TERMINALS}}": terms_md,
@@ -131,7 +131,7 @@ code {{ background: #f4f4f6; padding: 1px 4px; border-radius: 3px; font-size: 8.
 pre {{ background: #f7f7f9; border: 1px solid #e2e2e8; border-radius: 6px; padding: 10px; font-size: 7.8pt; line-height: 1.35; white-space: pre-wrap; }}
 pre code {{ background: none; padding: 0; }}
 .codehl {{ font-size: 6.6pt; line-height: 1.28; }}
-.codehl pre {{ border: none; background: none; padding: 0; white-space: pre-wrap; }}
+.codehl pre {{ border: 1px solid #e2e2e8; background: #fafafa; padding: 8px; white-space: pre-wrap; }}
 .codehl table, .codehl td {{ border: none; }}
 .codehl .linenos {{ color: #999; padding-right: 8px; user-select: none; }}
 img {{ max-width: 100%; page-break-inside: avoid; }}
@@ -139,7 +139,7 @@ img {{ max-width: 100%; page-break-inside: avoid; }}
 .fig img {{ max-width: 96%; border: 1px solid #e4e4e9; }}
 .cap {{ font-size: 8.5pt; color: #444; margin-top: 4px; }}
 .shot {{ page-break-inside: avoid; text-align: center; margin: 12px 0; }}
-.shot img {{ max-width: 80%; margin-top: 4px; border: 1px solid #ddd; }}
+.shot img {{ max-width: 100%; margin-top: 4px; border: 1px solid #ddd; }}
 .term {{ page-break-inside: avoid; margin: 10px 0; }}
 .term pre {{ font-size: 6.9pt; }}
 .cover {{ text-align: center; padding-top: 55mm; }}

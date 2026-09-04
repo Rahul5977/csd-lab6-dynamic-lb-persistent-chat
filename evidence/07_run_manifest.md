@@ -64,3 +64,10 @@
 | O3_r300_rep1 | O3 | 300 | 1 | 2026-09-04T13:42:32 | 220.68 rps | 267.6 ms | 0 (0.0%) | 3-3 |
 | O2_r300_rep1 | O2 | 300 | 1 | 2026-09-04T13:43:16 | 205.48 rps | 4488.56 ms | 0 (0.0%) | 2-2 |
 | ALGO_adaptive_hog_c50_rep1 | ALGO | adaptive+hog | 1 | 2026-09-04T13:45:32 | 237.54 rps | 1172.72 ms | 0 (0.0%) | 3-3 |
+| ALGO_round_robin_hog_c50_rep1 | ALGO | round_robin+hog | 1 | 2026-09-04T13:46:36 | 204.49 rps | 610.0 ms | 0 (0.0%) | 3-3 |
+| ALGO_least_connections_hog_c50_rep1 | ALGO | least_connections+hog | 1 | 2026-09-04T13:47:40 | 267.69 rps | 1202.67 ms | 0 (0.0%) | 3-3 |
+| ALGO_adaptive_hog_c50_rep2 | ALGO | adaptive+hog | 2 | 2026-09-04T13:48:43 | 256.46 rps | 1098.93 ms | 0 (0.0%) | 3-3 |
+| ALGO_round_robin_hog_c50_rep2 | ALGO | round_robin+hog | 2 | 2026-09-04T13:49:47 | 199.14 rps | 375.63 ms | 0 (0.0%) | 3-3 |
+| ALGO_least_connections_hog_c50_rep2 | ALGO | least_connections+hog | 2 | 2026-09-04T13:50:51 | 246.97 rps | 1303.14 ms | 0 (0.0%) | 3-3 |
+| ALGO_adaptive_nohog_c50_rep1 | ALGO | adaptive | 1 | 2026-09-04T13:51:49 | 271.83 rps | 1021.12 ms | 0 (0.0%) | 3-3 |
+| ALGO_round_robin_nohog_c50_rep1 | ALGO | round_robin | 1 | 2026-09-04T13:52:42 | 275.46 rps | 1109.0 ms | 0 (0.0%) | 3-3 |

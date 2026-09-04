@@ -221,7 +221,7 @@ for r_ in (300.0,):
     for n in (1, 2, 3):
         m = row(f"O{n}", r_)
         if m:
-            lines.append(f"| O: {m['offered_actual']} req/s actually offered | {n} backend(s) | **{m['rps']}** achieved | {m['p50']} | {m['p95']} | {m['errors']:.0f} + {m['dropped']} dropped | {m['active']} |")
+            lines.append(f"| O: {m['offered_actual']} req/s actually offered | {n} backend(s) | **{m['rps']}** achieved | {m['p50']} | {m['p95']} | {m['errors']:.0f} failed (of which {m['dropped']} dropped) | {m['active']} |")
 for r in scale_rows:
     lines.append(f"| SCALE phase {r['phase']} | {r['active']:.0f} backend(s) | **{r['rps']:.1f}** | {r['p50']:.0f} | {r['p95']:.0f} | â€” | {r['active']:.0f} |")
 for param in ("adaptive_hog", "round_robin_hog", "least_connections_hog"):
@@ -241,7 +241,8 @@ if os.path.exists(dd):
     names = {"T1": "same id, sequential retries", "T2": "same id, concurrent storm across backends", "T3": "send, drop connection, reconnect, re-send",
              "T4": "Idempotency-Key header", "T5": "control: distinct ids", "P1": "persistence across DB-service restart"}
     for r in d["results"]:
-        lines.append(f"| {r['test']} | {names.get(r['test'], '')} | {r['sent']} | **{r['stored']}** | {r['duplicate_responses']} | {', '.join(r['backends'])} | {r['verdict']} {r['note'] if r['test'] == 'P1' else ''} |")
+        note = r['note'].split(':', 1)[1].strip() if r['test'] == 'P1' and ':' in r['note'] else ''
+        lines.append(f"| {r['test']} | {names.get(r['test'], '')} | {r['sent']} | **{r['stored']}** | {r['duplicate_responses']} | {', '.join(r['backends']) or 'via LB'} | {r['verdict']} {note} |")
     lines.append(f"\nDatabase after the test: {d['db_stats'].get('messages')} messages, {d['db_stats'].get('duplicates_rejected_total')} duplicates rejected in total ({d['db_stats'].get('engine')}).")
     open(os.path.join(TABLES, "dedup.md"), "w").write("\n".join(lines) + "\n")
 
@@ -348,7 +349,7 @@ timeline("FAIL_recovery_c100", "failover_timeline.png", "Failure and recovery â€
 # 3. scaling phases bar chart (effect of adding each backend)
 if scale_rows:
     fig, ax1 = plt.subplots(figsize=(9, 4.3))
-    names = [r["phase"].split(":")[0] + "\n" + r["phase"].split(":")[1].strip()[:26] for r in scale_rows]
+    names = [r["phase"].split(":")[0] + "\n" + "\n".join(r["phase"].split(":")[1].strip().replace(" (saturated)", "\n(saturated)").split(", ")) for r in scale_rows]
     xs = range(len(scale_rows))
     ax1.bar([x - 0.2 for x in xs], [r["rps"] for r in scale_rows], width=0.4, color="#4f6df5", label="throughput (req/s)")
     ax1.set_ylabel("throughput (req/s)")
@@ -356,7 +357,7 @@ if scale_rows:
     ax2.plot(list(xs), [r["p95"] for r in scale_rows], "o-", color="#d97706", label="p95 ms")
     ax2.plot(list(xs), [r["p50"] for r in scale_rows], "s--", color="#0f9d58", label="p50 ms")
     ax2.set_ylabel("response time (ms)"); ax2.set_yscale("log")
-    ax1.set_xticks(list(xs)); ax1.set_xticklabels(names, fontsize=7.5)
+    ax1.set_xticks(list(xs)); ax1.set_xticklabels(names, fontsize=7)
     ax1.set_title("Effect of adding backends (phases of the scaling run)")
     h1, l1 = ax1.get_legend_handles_labels(); h2, l2 = ax2.get_legend_handles_labels()
     ax1.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper left"); ax1.grid(alpha=.3, axis="y")

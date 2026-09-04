@@ -171,7 +171,7 @@ readmitted / draining / removed / config events), the auto-refreshing dashboard 
 All backends are stateless; every user, session, room and message lives in **one SQLite database
 (WAL mode)** owned by `app/db_service.js` on sys1 and reached over HTTP by every backend. The
 database file (`~/assignment6/data/chat.sqlite`) survives restarts of any backend, of the database
-service, and of the whole cluster — verified in the smoke test (48 assertions, including a database
+service, and of the whole cluster — verified in the smoke test (47 assertions, including a database
 restart mid-test) and live (§9.5). Assignment 5's data (717 users, 5 rooms, 111 180 messages) was
 migrated in on first boot, so the old accounts still work. SQLite was chosen because the lab boxes
 allow no root and no package installation; Node 22's built-in `node:sqlite` needs nothing but a
@@ -349,7 +349,18 @@ The same 50-user load was then run under each algorithm.
 
 {{C_ALGO}}
 
-{{A_ALGO}}
+**Reading the table.** With sys3 losing half its core to the hog, the balancer's view of it changed
+immediately (`sys_cpu_pct` 100 %, state DEGRADED, EWMA rising) and the **adaptive algorithm cut sys3's
+share from a third to 25 %**, giving the two healthy backends 37–38 % each. That rerouting is worth
+**22 % more throughput than round robin (247 vs 202 req/s)** at the same 50 users. `least_connections`
+— also a dynamic rule, reacting to queue depth rather than to measured time and load — reached a
+similar 257 req/s with sys3 at 27.5 %. Round robin kept feeding sys3 exactly one third: its median
+looks better (39 ms — the two fast backends answer quickly) but its **p99 is 5.8 s** (requests
+queued on the loaded backend), which is precisely the tail that drags closed-loop throughput down.
+Without the hog (last two rows) the three backends are equal and adaptive and round robin are
+indistinguishable (272 vs 275 req/s, 33/36/32 % vs 33/33/33 %) — the dynamic rule costs nothing when
+there is nothing to react to and pays when one backend is quietly slower. (The adaptive rows are the
+median of two repetitions; run-to-run noise on the shared host is ±10 %.)
 
 ### 9.4 Comparison summary
 
@@ -357,13 +368,60 @@ The same 50-user load was then run under each algorithm.
 
 ### 9.5 Persistence and duplicate prevention on the allotted systems
 
-{{A_PERSIST}}
+**Persistence.** The database file on sys1 held 273 769 messages, 719 users and 7 rooms at the end
+of the experiments (`/stats`, terminal capture §11) — every load-generator message of every run, the
+migrated Assignment-5 history, and the demo conversations, all served identically by whichever backend
+the balancer picks. `dedup_test.py --restart-db` restarted the database service in the middle of the
+test (test P1): the row count was unchanged across the restart (48 → 49 with the probe message),
+the probe message was readable through a different backend afterwards, and re-sending an id stored
+*before* the restart was still answered `duplicate:true` — the guard lives in the database file, not
+in any process's memory. The backends reconnected to the database's firehose by themselves
+(`db_firehose: true` in `/health`). The smoke test exercises the same restart locally on every run.
+
+**Duplicate prevention.** All five duplicate scenarios in §6.4 passed through the public URL against
+three live backends, and the `dedup_log` table holds an audit row for every rejection the database
+itself had to make (10 in total; most duplicates never reach it because the backends' LRU answers
+them first). A SQL check on the live file — `SELECT id FROM messages GROUP BY id HAVING COUNT(*) > 1`
+— returns no rows (terminal capture §11).
 
 <div class="pagebreak"></div>
 
 ## 10. Analysis and Discussion
 
-{{A_DISCUSSION}}
+**Dynamic selection works, and it matters most when backends are unequal.** With three healthy,
+equal backends the adaptive algorithm behaves like an even split (33/34/33 % in every run), so nothing
+is lost versus round robin; the algorithm comparison (§9.3) shows what happens when one backend is
+quietly losing half its CPU to another process — the situation a static rotation cannot see.
+
+**Scaling is near-linear because the backends are CPU-bound and the shared parts are cheap.** Each
+backend is one core, scrypt logins cost ~100 ms of it, and the mix has 10 % logins; a backend saturates
+at ~90–105 req/s. The balancer (one thread per connection, pooled upstream sockets) and the database
+service (SQLite in WAL mode, one process) both run on sys1 and never became the bottleneck in these
+runs — three backends reached 2.4–3.2× the single-backend throughput in the closed-loop sweep and
+2.9× in the live scaling run. The residual gap to 3× is the shared multi-tenant host (Assignment 5
+measured 2–3× swings between quiet and busy hours), which is why every comparison here was
+interleaved inside the same minutes.
+
+**Adding a backend takes effect within one heartbeat.** The registration heartbeat is 5 s and the
+candidate scan runs every 5 s; a never-sampled backend scores 0, so it is chosen on its very first
+eligible request instead of waiting for a probe history. In the scaling run the `active backends`
+line and the share panel change in the same second (Figure 4). A dead backend is removed on the
+first failed connect (passive check) — 36 failed requests out of 34 927 in the failure run, all in
+one two-second window — and re-admitted after two clean probes.
+
+**Persistence and idempotency are a property of the data model, not of luck.** The client-minted id
+is the primary key; retries, reconnections and even twenty concurrent copies of the same message
+through three different backends produce exactly one row (§6.4), and a duplicate of an id stored
+before a database restart is still rejected afterwards. Answering duplicates with `200 duplicate:true`
+rather than an error is deliberate: a client that receives an error would retry again.
+
+**Limits and future work.** The single database service on sys1 is a single point of failure and,
+at some load, a bottleneck (Assignment 5 measured the same for its state service); the standard next
+steps are a replicated store (Postgres with streaming replication, or a leader/follower SQLite via
+Litestream) and backend-local write queues. The balancer's DEGRADED rule uses fixed thresholds
+(2 s probe, 95 % CPU); an adaptive threshold from the EWMA's own history would be more robust. The
+open-loop generator should use an asynchronous client to offer more than ~230 req/s. TLS termination
+at the balancer and a second balancer with a shared virtual IP would complete the picture.
 
 ## 11. Screenshots and Evidence
 
@@ -375,17 +433,61 @@ The same 50-user load was then run under each algorithm.
 
 ## 12. Challenges Faced and How They Were Solved
 
-{{A_CHALLENGES}}
+1. **A pure "least response time" rule herded all traffic onto one backend.** The first version of the
+   adaptive algorithm picked the minimum score; with sequential traffic every backend has zero in-flight
+   requests, so whichever backend had the lowest EWMA received 60 of 60 requests in the local test.
+   Fixed by power-of-two-choices over the score (§4.1): equal backends now split evenly, slow ones are
+   starved gradually. The local LB test (30 assertions) guards against regression.
+2. **The CPU-hog experiment silently did nothing the first time.** The helper script used `$(case …)`,
+   which macOS's bash 3.2 rejects; the hog never started, so the first algorithm comparison showed
+   three identical 33 % shares. Fixed the script, and — more importantly — discovered that the load
+   signal was wrong for the purpose: a busy loop *reduces* the Node process's own CPU share, which made
+   sys3 look *idler*. The backend now also reports the container's cgroup CPU utilisation against its
+   quota (`sys_cpu_pct`), which sees every tenant of the box; the balancer takes the maximum of process
+   and system CPU. The comparison was re-run with the corrected setup (§9.3).
+3. **Node 18 on sys1 has no SQLite module.** `node:sqlite` needs Node ≥ 22.13; there is no root and no
+   package manager access on the lab boxes. Installed a user-local static Node 22 into `~/node` on sys1
+   (the same technique Assignment 5 used for Node 20 on sys2–4); the Assignment-5 services keep using the
+   system Node 18 untouched.
+4. **`pkill -f` killed the deploy script itself.** The pattern matched the deploying shell's own command
+   line over SSH, so the database service "started" and vanished without a log line. Replaced with
+   tmux-session and pid-file management (the same trap Assignment 5 recorded — this time it cost minutes,
+   not hours).
+5. **The discovery scan admitted the wrong backend.** Before the new backend was deployed on sys3, the
+   candidate scan happily admitted Assignment 5's *old* backend still listening on sys3:3000 — it
+   answered `/health`, after all. Added `discovery.require_version`: a candidate is admitted only if its
+   health JSON reports the expected application version.
+6. **Port 3000 on sys4 was already taken** by my course project (an nginx front end). Since only the
+   balancer needs a public port, the sys4 backend simply listens on 3001 on the private network and
+   nothing of the project was touched.
+7. **Scripted event times were off by the load generator's setup phase** (logging in 200 users takes
+   10–15 s before measurement starts), so "sys3 added at 140 s" really happened at 128 s of measured
+   time. The analysis now derives every event time from the sampled active-backend count, never from the
+   script's sleep offsets.
+8. **The load generator, not the system, capped the open-loop sweep** near 230 arrivals/s. Reported
+   honestly by plotting the *actual* offered rate (§8.2) rather than the nominal one.
 
 ## 13. Conclusion
 
-{{A_CONCLUSION}}
+The Assignment-5 chat system now runs on three allotted systems behind a balancer that chooses
+backends by measured response time, queue depth and system load, notices backends that appear or
+disappear while the application is running, and keeps a slow backend in service while removing a dead
+one. All backends share one persistent SQLite database in which every message has a client-minted
+unique id, and the database itself guarantees that a retried, reconnected or concurrently duplicated
+send is stored once. Measured on the lab systems: throughput rose from ~100 to ~190 to ~285 req/s as
+backends were added live under a 100-user load; three backends deliver 2.4–3.2× the single-backend
+throughput across the concurrency sweep with zero failed requests; under open-loop load the single
+backend collapses at ~230 req/s offered (41 % failures) where three backends answer in 268 ms at p95
+with none; a SIGKILLed backend cost 0.10 % failed requests and was back in rotation within seconds of
+restarting; and every duplicate-prevention test through the public URL left exactly one row in the
+database. The previous assignment's URL and direct ports keep working, its files are untouched, and
+the whole system can be redeployed, re-measured and demonstrated from the scripts in the repository.
 
 ## Appendix A — Reproduction
 
 ```bash
 git clone https://github.com/Rahul5977/csd-lab6-dynamic-lb-persistent-chat && cd csd-lab6-dynamic-lb-persistent-chat
-node app/tests/smoke.js && python3 lb/test_lb.py        # local tests (48 + 33 assertions)
+node app/tests/smoke.js && python3 lb/test_lb.py        # local tests (47 + 30 assertions)
 bash scripts/deploy.sh all                              # Node 22 + DB on sys1, backend on sys2, LB v2 on sys1
 bash scripts/scale.sh sys3 up; bash scripts/scale.sh sys4 up
 bash scripts/sanity_check.sh

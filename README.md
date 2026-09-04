@@ -23,9 +23,9 @@ Dashboard: http://10.1.75.53:3269/lb/ · stats: `/lb/stats` · events: `/lb/even
 | `app/db_service.js` | SQLite (WAL, `node:sqlite`) database service: users, sessions, rooms, messages with `id PRIMARY KEY` + `UNIQUE(room,seq)`, idempotent append, duplicate audit log, WS firehose |
 | `app/server.js` | Backend v3: client message ids / `Idempotency-Key`, per-backend dedup LRU, load-reporting `/health`, self-registration + heartbeat + deregister with the LB; auth + E2E crypto unchanged from Assignments 4/5 |
 | `app/static/` | Chat UI: optimistic bubbles, retry with the same id, "Resend last" duplicate demo, live cluster panel |
-| `app/tests/smoke.js` | 48 end-to-end assertions (dedup races, persistence across DB restart, registration) |
+| `app/tests/smoke.js` | 47 end-to-end assertions (dedup races, persistence across DB restart, registration) |
 | `lb/loadbalancer.py` | Dynamic LB v2 (Python 3 stdlib): adaptive P2C scoring, UP/DEGRADED/DOWN/DRAINING, register/discovery/config-watch, dashboard, events |
-| `lb/test_lb.py` | 33 LB integration assertions (registration, scan, slow-backend scoring, kill/recover, drain, all algorithms) |
+| `lb/test_lb.py` | 30 LB integration assertions (registration, scan, slow-backend scoring, kill/recover, drain, all algorithms) |
 | `loadgen/loadgen.py` | Load generator v2: closed loop, open loop (offered load), ramp schedule, 1-s timeseries incl. active backends |
 | `scripts/` | `deploy.sh`, `scale.sh` (add/remove/kill a backend live), `cpu_hog.sh`, `run_experiments.sh`, `dedup_test.py`, `analyze.py`, `build_report.py`, `sanity_check.sh`, `rollback_lab5.sh`, `demo.sh` |
 | `results/` · `evidence/` · `report/` | raw runs (JSON), processed CSV, charts, tables, evidence captures, the PDF report |

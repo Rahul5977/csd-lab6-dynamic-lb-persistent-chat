@@ -1,0 +1,54 @@
+$ bash scripts/rollback_lab5.sh   (13:55:29)
+== stopping Assignment-6 backends ==
+sys2 SIGTERM sent (deregister + drain)
+sys3 SIGTERM sent (deregister + drain)
+sys4 SIGTERM sent (deregister + drain)
+== stopping Assignment-6 LB on sys1 (DB service on 5270 is left running; it is harmless) ==
+   lb6 stopped
+== restoring Lab 5 backends (sys2, sys3) ==
+   sys2 Lab 5 backend healthy
+   sys3 Lab 5 backend healthy
+== restoring Lab 5 LB on sys1:3000 ==
+   Lab 5 LB healthy
+== public check ==
+{
+  "algorithm": "round_robin",
+  "uptime_s": 1.1,
+  "total_requests": 2,
+  "total_errors": 0,
+  "backends": [
+    {
+      "id": "sys2",
+      "host": "172.17.0.71",
+      "port": 3000,
+      "weight": 1,
+      "healthy": true,
+      "in_flight": 0,
+      "requests": 0,
+      "errors": 0,
+      "lat
+Lab 5 restored.
+
+$ curl http://10.1.75.53:3269/lb/stats | head  (Lab 5 LB v1 serving)
+{
+  "algorithm": "round_robin",
+  "uptime_s": 1.1,
+  "total_requests": 3,
+  "total_errors": 0,
+  "backends": [
+    {
+      "id": "sys2",
+      "host": "172.17.0.71",
+      "port": 3000,
+      "weight": 1,
+      "healthy": true,
+$ curl http://10.1.75.53:3270/health (Lab 5 backend, state service 5269)
+{"status":"ok","backend":"sys2","uptime":3,"connections":0,"state_firehose":true}
+
+$ redeploy Assignment 6  (13:55:35)
+   sys2 healthy ✔
+   sys3 healthy ✔
+   sys4 healthy ✔
+   lb healthy ✔
+{"status":"ok","service":"lb","version":"v2-dynamic","active_backends":3}
+done 13:55:46

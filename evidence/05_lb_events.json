@@ -1,0 +1,508 @@
+{
+  "events": [
+    {
+      "t": 1788509630.69,
+      "kind": "added",
+      "backend": "sys3",
+      "detail": "172.17.0.72:3000 via scan",
+      "active": 2
+    },
+    {
+      "t": 1788509630.701,
+      "kind": "added",
+      "backend": "sys4",
+      "detail": "172.17.0.73:3001 via scan",
+      "active": 3
+    },
+    {
+      "t": 1788509642.778,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 10 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509648.829,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509661.323,
+      "kind": "ejected",
+      "backend": "sys3",
+      "detail": "passive: connect/proxy failure",
+      "active": 2
+    },
+    {
+      "t": 1788509679.019,
+      "kind": "readmitted",
+      "backend": "sys3",
+      "detail": "probe 6 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509680.285,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"adaptive\"}",
+      "active": 3
+    },
+    {
+      "t": 1788509685.061,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 12 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509694.69,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 176 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509695.021,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 158 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509733.218,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 4 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509733.229,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509742.287,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509744.305,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"round_robin\"}",
+      "active": 3
+    },
+    {
+      "t": 1788509751.344,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 10 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509757.592,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 55 ms, cpu 99%",
+      "active": 3
+    },
+    {
+      "t": 1788509757.824,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 166 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509767.917,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 57 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509771.027,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 74 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509774.042,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 15 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509777.263,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 6 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509780.297,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 33 ms, cpu 99%",
+      "active": 3
+    },
+    {
+      "t": 1788509783.376,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 7 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509807.76,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 7 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509808.937,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"least_connections\"}",
+      "active": 3
+    },
+    {
+      "t": 1788509813.798,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 6 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509819.954,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 10 ms, cpu 97%",
+      "active": 3
+    },
+    {
+      "t": 1788509822.998,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 42 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509861.654,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509861.664,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509870.707,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 7 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509872.507,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"adaptive\"}",
+      "active": 3
+    },
+    {
+      "t": 1788509876.745,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 5 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509886.196,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 69 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509886.312,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 70 ms, cpu 99%",
+      "active": 3
+    },
+    {
+      "t": 1788509925.019,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 6 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509925.033,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 9 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509934.077,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 9 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509936.201,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"round_robin\"}",
+      "active": 3
+    },
+    {
+      "t": 1788509940.113,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 5 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509950.208,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 40 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509953.618,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 60 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788509956.627,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 9 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509962.949,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788509999.936,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510000.009,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"least_connections\"}",
+      "active": 3
+    },
+    {
+      "t": 1788510005.983,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 6 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510012.012,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 5 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510015.43,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 76 ms, cpu 98%",
+      "active": 3
+    },
+    {
+      "t": 1788510053.555,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510053.565,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510062.617,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510063.741,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"adaptive\"}",
+      "active": 3
+    },
+    {
+      "t": 1788510068.848,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 48 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510069.133,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 285 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510072.396,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 263 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510110.463,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 9 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510110.47,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 8 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510110.479,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 8 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510117.318,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"round_robin\"}",
+      "active": 3
+    },
+    {
+      "t": 1788510122.76,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 157 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510125.899,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 61 ms, cpu 99%",
+      "active": 3
+    },
+    {
+      "t": 1788510126.015,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 66 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510129.228,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 76 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510132.414,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 49 ms, cpu 98%",
+      "active": 3
+    },
+    {
+      "t": 1788510144.817,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510151.196,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 47 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788510157.433,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 10 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510163.627,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510163.633,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788510170.697,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"adaptive\"}",
+      "active": 3
+    },
+    {
+      "t": 1788510171.968,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"adaptive\"}",
+      "active": 3
+    }
+  ]
+}
