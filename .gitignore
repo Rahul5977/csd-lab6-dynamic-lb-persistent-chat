@@ -1,0 +1,22 @@
+.env
+*.env
+!.env.example
+__pycache__/
+*.pyc
+node_modules/
+venv/
+.venv/
+.DS_Store
+data/
+*.log
+logs/*.log
+cm-*
+*.sqlite-wal
+*.sqlite-shm
+report/report.html
+
+# working notes kept local only (same convention as Lab 5)
+PROGRESS.md
+LOGBOOK.md
+ROADMAP.md
+.local/

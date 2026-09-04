@@ -1,0 +1,29 @@
+{
+  "listen_host": "0.0.0.0",
+  "listen_port": 3000,
+  "algorithm": "adaptive",
+  "backends": [
+    { "id": "sys2", "host": "172.17.0.71", "port": 3000, "weight": 1 }
+  ],
+  "health_interval_s": 3,
+  "health_timeout_s": 6,
+  "fail_threshold": 2,
+  "rise_threshold": 2,
+  "degrade_ms": 2000,
+  "degrade_cpu_pct": 95,
+  "ewma_alpha": 0.2,
+  "explore_pct": 5,
+  "load_weight": 1.0,
+  "connect_timeout_s": 3,
+  "upstream_timeout_s": 30,
+  "register_token": "__SET_BY_DEPLOY__",
+  "discovery": {
+    "candidates": [
+      { "host": "172.17.0.72", "port": 3000 },
+      { "host": "172.17.0.73", "port": 3001 }
+    ],
+    "interval_s": 5
+  },
+  "prune_after_s": 900,
+  "access_log": "logs/lb_access.csv"
+}

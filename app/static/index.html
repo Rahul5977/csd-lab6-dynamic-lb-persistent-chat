@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+</head>
+<body>
+
+<!-- ── Auth screen ─────────────────────────────────────────────────────── -->
+<section id="auth" class="screen">
+  <div class="auth-card">
+    <h1>Chat</h1>
+    <p class="muted">End-to-end encrypted group chat · dynamically load-balanced · persistent.</p>
+    <form id="auth-form" autocomplete="on">
+      <label>Username <input id="auth-user" required minlength="2" maxlength="24" autocomplete="username" autofocus></label>
+      <label>Password <input id="auth-pass" type="password" required minlength="8" autocomplete="current-password"></label>
+      <div class="row">
+        <button type="submit" id="btn-login" class="primary">Sign in</button>
+        <button type="button" id="btn-register">Create account</button>
+      </div>
+      <p id="auth-error" class="error" hidden></p>
+    </form>
+  </div>
+</section>
+
+<!-- ── Main app ────────────────────────────────────────────────────────── -->
+<section id="app" class="screen" hidden>
+  <aside id="sidebar">
+    <header>
+      <span id="me" class="me"></span>
+      <button id="btn-logout" title="Sign out">Sign out</button>
+    </header>
+    <div class="new-room">
+      <input id="new-room-name" placeholder="new-room-name" maxlength="32" pattern="[a-z0-9-]+">
+      <button id="btn-new-room" title="Create room">+</button>
+    </div>
+    <nav id="rooms"></nav>
+    <div id="cluster" class="cluster" title="Live view of the load balancer pool (/lb/stats)">
+      <div class="cluster-head"><span>Cluster</span><span id="cluster-count" class="muted">—</span></div>
+      <div id="cluster-list"></div>
+    </div>
+    <footer>
+      <span id="conn" class="conn off">Connecting…</span>
+      <span id="backend-badge" class="badge" title="Which backend instance served you">—</span>
+    </footer>
+  </aside>
+
+  <main id="chat">
+    <header id="chat-head">
+      <div>
+        <h2 id="room-title">Pick a room</h2>
+        <span id="room-lock" class="muted"></span>
+        <span id="room-count" class="muted" title="Rows stored for this room in the shared database"></span>
+      </div>
+      <button id="btn-lock" hidden title="Encrypt this room with a shared passphrase">🔒 Lock room</button>
+    </header>
+    <div id="messages"><p class="empty">Choose or create a room on the left to start chatting.</p></div>
+    <form id="composer" hidden>
+      <input id="msg-input" placeholder="Message… (Enter to send)" maxlength="2000" autocomplete="off">
+      <button type="submit" class="primary">Send</button>
+      <button type="button" id="btn-resend" title="Re-send the last message with the SAME message id — the server must not store it twice">↻ Resend last</button>
+    </form>
+  </main>
+</section>
+
+<!-- ── Passphrase modal (lock / unlock) ────────────────────────────────── -->
+<dialog id="key-modal">
+  <form method="dialog" id="key-form">
+    <h3 id="key-title">Unlock room</h3>
+    <p id="key-hint" class="muted"></p>
+    <input id="key-pass" type="password" placeholder="Room passphrase (≥ 10 chars)" minlength="10" required>
+    <p id="key-error" class="error" hidden></p>
+    <div class="row">
+      <button type="submit" class="primary" id="key-ok">Unlock</button>
+      <button type="button" id="key-cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/crypto.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
