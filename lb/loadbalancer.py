@@ -81,7 +81,8 @@ DEFAULTS = {
     "connect_timeout_s": 3,
     "upstream_timeout_s": 30,
     "register_token": "",            # shared secret for /lb/register (empty = open)
-    "discovery": {"candidates": [], "interval_s": 5},   # [{"host","port"}] slots to probe
+    "discovery": {"candidates": [], "interval_s": 5,    # [{"host","port"}] slots to probe
+                  "require_version": ""},              # admit only backends reporting this /health version
     "prune_after_s": 600,            # remove dynamic backends DOWN this long
     "access_log": "logs/lb_access.csv",
 }
@@ -403,6 +404,9 @@ def discovery_loop():
                 continue
             ok, ms, data = probe(host, port, min(2.0, cfg["health_timeout_s"]))
             if ok:
+                want = cfg["discovery"].get("require_version")
+                if want and not str((data or {}).get("version", "")).startswith(want):
+                    continue                     # some other service on that slot — not ours
                 bid = (data or {}).get("backend") or c.get("id") or f"{host}:{port}"
                 LB_STATE.add_backend(bid, host, port, c.get("weight", 1), source="scan")
         # config file edited? reload without a restart

@@ -32,7 +32,7 @@ LB_TOKEN=$(grep '^LB_TOKEN=' .env | cut -d= -f2)
 
 push() {  # $1 = ssh alias, $2... = local dirs/files (no rsync on the lab boxes: tar over ssh)
   local host="$1"; shift
-  tar czf - --exclude data --exclude '*.log' --exclude __pycache__ "$@" | ssh "$host" "mkdir -p $REMOTE_DIR && cd $REMOTE_DIR && tar xzf -"
+  COPYFILE_DISABLE=1 tar --no-xattrs -czf - --exclude data --exclude '*.log' --exclude __pycache__ "$@" | ssh "$host" "mkdir -p $REMOTE_DIR && cd $REMOTE_DIR && tar xzf -"
 }
 
 wait_ok() {  # $1 ssh alias, $2 url (inside the box), $3 label
@@ -62,9 +62,8 @@ deploy_db() {
   ssh lbsys1 "
     set -e
     cd $REMOTE_DIR && mkdir -p data logs
-    tmux kill-session -t db6 2>/dev/null || true
-    pkill -f 'node app/db_service.js' 2>/dev/null || true
-    sleep 0.5
+    tmux kill-session -t db6 2>/dev/null || true     # (no pkill -f here: it would match this very shell)
+    for i in 1 2 3 4 5; do ss -tln | grep -q ':$DB_PORT ' || break; sleep 1; done
     # MIGRATE_FROM imports Lab 5's users/rooms/messages once (marker file prevents repeats)
     tmux new-session -d -s db6 \"cd $REMOTE_DIR && ulimit -n 65536 && PORT=$DB_PORT DATA_DIR=$REMOTE_DIR/data MIGRATE_FROM=\$HOME/assignment5/data ~/node/bin/node app/db_service.js >> db.log 2>&1\"
   "

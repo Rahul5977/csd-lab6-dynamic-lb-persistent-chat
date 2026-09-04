@@ -1,0 +1,84 @@
+{
+  "url": "http://10.1.75.53:3269",
+  "n": 20,
+  "at": 1788505764.560571,
+  "results": [
+    {
+      "test": "T1",
+      "sent": 20,
+      "stored": 1,
+      "duplicate_responses": 19,
+      "backends": [
+        "sys2",
+        "sys3",
+        "sys4"
+      ],
+      "verdict": "PASS",
+      "note": "same id sequentially"
+    },
+    {
+      "test": "T2",
+      "sent": 20,
+      "stored": 1,
+      "duplicate_responses": 19,
+      "backends": [
+        "sys2",
+        "sys3",
+        "sys4"
+      ],
+      "verdict": "PASS",
+      "note": "concurrent, 1 distinct seq"
+    },
+    {
+      "test": "T3",
+      "sent": 2,
+      "stored": 1,
+      "duplicate_responses": 1,
+      "backends": [
+        "sys2",
+        "sys4"
+      ],
+      "verdict": "PASS",
+      "note": "seq 3 == 3"
+    },
+    {
+      "test": "T4",
+      "sent": 5,
+      "stored": 1,
+      "duplicate_responses": 4,
+      "backends": [
+        "sys2"
+      ],
+      "verdict": "PASS",
+      "note": "Idempotency-Key header"
+    },
+    {
+      "test": "T5",
+      "sent": 20,
+      "stored": 20,
+      "duplicate_responses": 0,
+      "backends": [
+        "sys3"
+      ],
+      "verdict": "PASS",
+      "note": "control: distinct ids"
+    }
+  ],
+  "db_stats": {
+    "backend": "sys2",
+    "service": "db",
+    "engine": "sqlite (node:sqlite, WAL)",
+    "file": "/home/student/assignment6/data/chat.sqlite",
+    "db_bytes": 26882048,
+    "users": 718,
+    "rooms": 6,
+    "messages": 112484,
+    "duplicates_rejected_total": 4,
+    "duplicates_rejected_since_boot": 4,
+    "appended_since_boot": 1304,
+    "requests": 6940,
+    "subscribers": 3,
+    "uptime": 76,
+    "node": "v22.23.2"
+  }
+}

@@ -22,7 +22,8 @@
       { "host": "172.17.0.72", "port": 3000 },
       { "host": "172.17.0.73", "port": 3001 }
     ],
-    "interval_s": 5
+    "interval_s": 5,
+    "require_version": "v3-assignment6"
   },
   "prune_after_s": 900,
   "access_log": "logs/lb_access.csv"
