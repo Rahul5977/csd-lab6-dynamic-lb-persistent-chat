@@ -1,0 +1,17 @@
+$ bash scripts/sanity_check.sh
+== Assignment 6 sanity check Fri Sep  4 12:53:56 IST 2026 ==
+✅ LB v2 (public)     http://10.1.75.53:3269/lb/health  {"status":"ok","service":"lb","version":"v2-dynamic","active_backends":3}
+✅ app via LB         http://10.1.75.53:3269/health  {"status":"ok","backend":"sys3","version":"v3-assignment6","uptime":342,"connections":1,"db_firehose":true,"lo
+   algorithm=round_robin active_backends=3 total_requests=147670
+   - sys2  172.17.0.71:3000  DEGRADED  src=config   ewma=452.9 score=25360.3 cpu=97.5 reqs=60463
+   - sys3  172.17.0.72:3000  UP        src=scan     ewma=52.3 score=209.0 cpu=85.2 reqs=42877
+   - sys4  172.17.0.73:3001  UP        src=scan     ewma=213.2 score=4477.5 cpu=92.9 reqs=42968
+✅ DB service sys1:5270  sqlite  messages=154846 users=719 rooms=7 dups_rejected=4 subscribers=3
+✅ backend sys2 :3000  v3-assignment6 cpu 100 %
+✅ backend sys3 :3000  v3-assignment6 cpu 93.5 %
+✅ backend sys4 :3001  v3-assignment6 cpu 99.1 %
+-- previous assignments --
+✅ Lab5 direct sys2   http://10.1.75.53:3270/health  {"status":"ok","backend":"sys2","version":"v3-assignment6","uptime":948,"connections":0,"db_firehose":true,"lo
+✅ Lab5 direct sys3   http://10.1.75.53:3271/health  {"status":"ok","backend":"sys3","version":"v3-assignment6","uptime":343,"connections":1,"db_firehose":true,"lo
+✅ Project Contour    http://10.1.75.53:3272 (sys4:3000, untouched)
+✅ Lab5 state service sys1:5269 (still running, untouched)

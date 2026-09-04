@@ -1,0 +1,193 @@
+{
+  "events": [
+    {
+      "t": 1788505729.578,
+      "kind": "added",
+      "backend": "sys3",
+      "detail": "172.17.0.72:3000 via scan",
+      "active": 2
+    },
+    {
+      "t": 1788505729.584,
+      "kind": "added",
+      "backend": "sys4",
+      "detail": "172.17.0.73:3001 via scan",
+      "active": 3
+    },
+    {
+      "t": 1788505759.96,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 7 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788505763.032,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 9 ms",
+      "active": 3
+    },
+    {
+      "t": 1788505872.946,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"adaptive\"}",
+      "active": 3
+    },
+    {
+      "t": 1788505873.999,
+      "kind": "draining",
+      "backend": "sys3",
+      "detail": "deregister request",
+      "active": 2
+    },
+    {
+      "t": 1788505874.029,
+      "kind": "draining",
+      "backend": "sys4",
+      "detail": "deregister request",
+      "active": 1
+    },
+    {
+      "t": 1788505877.808,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 14 ms, cpu 100%",
+      "active": 1
+    },
+    {
+      "t": 1788505877.808,
+      "kind": "ejected",
+      "backend": "sys3",
+      "detail": "drained backend went away",
+      "active": 1
+    },
+    {
+      "t": 1788505877.808,
+      "kind": "ejected",
+      "backend": "sys4",
+      "detail": "drained backend went away",
+      "active": 1
+    },
+    {
+      "t": 1788506019.997,
+      "kind": "readmitted",
+      "backend": "sys3",
+      "detail": "probe 6 ms",
+      "active": 2
+    },
+    {
+      "t": 1788506023.441,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 437 ms, cpu 98%",
+      "active": 2
+    },
+    {
+      "t": 1788506074.859,
+      "kind": "readmitted",
+      "backend": "sys4",
+      "detail": "probe 10 ms",
+      "active": 3
+    },
+    {
+      "t": 1788506079.629,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 1663 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788506198.235,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788506198.241,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788506198.246,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788506203.398,
+      "kind": "config",
+      "backend": "-",
+      "detail": "{\"algorithm\": \"adaptive\"}",
+      "active": 3
+    },
+    {
+      "t": 1788506210.599,
+      "kind": "degraded",
+      "backend": "sys2",
+      "detail": "probe 251 ms, cpu 96%",
+      "active": 3
+    },
+    {
+      "t": 1788506210.751,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 151 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788506210.832,
+      "kind": "degraded",
+      "backend": "sys4",
+      "detail": "probe 80 ms, cpu 96%",
+      "active": 3
+    },
+    {
+      "t": 1788506244.869,
+      "kind": "ejected",
+      "backend": "sys3",
+      "detail": "passive: connect/proxy failure",
+      "active": 2
+    },
+    {
+      "t": 1788506300.323,
+      "kind": "readmitted",
+      "backend": "sys3",
+      "detail": "probe 6 ms",
+      "active": 3
+    },
+    {
+      "t": 1788506305.154,
+      "kind": "degraded",
+      "backend": "sys3",
+      "detail": "probe 1762 ms, cpu 100%",
+      "active": 3
+    },
+    {
+      "t": 1788506360.024,
+      "kind": "recovered",
+      "backend": "sys3",
+      "detail": "probe 5 ms",
+      "active": 3
+    },
+    {
+      "t": 1788506363.035,
+      "kind": "recovered",
+      "backend": "sys2",
+      "detail": "probe 4 ms",
+      "active": 3
+    },
+    {
+      "t": 1788506363.044,
+      "kind": "recovered",
+      "backend": "sys4",
+      "detail": "probe 5 ms",
+      "active": 3
+    }
+  ]
+}

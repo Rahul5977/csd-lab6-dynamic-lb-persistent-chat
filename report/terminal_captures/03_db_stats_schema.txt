@@ -1,0 +1,26 @@
+$ ssh lbsys1 'curl -s http://127.0.0.1:5270/stats'
+{
+    "service": "db",
+    "engine": "sqlite (node:sqlite, WAL)",
+    "file": "/home/student/assignment6/data/chat.sqlite",
+    "db_bytes": 39276544,
+    "users": 719,
+    "rooms": 7,
+    "messages": 154930,
+    "duplicates_rejected_total": 4,
+    "duplicates_rejected_since_boot": 4,
+    "appended_since_boot": 43750,
+    "requests": 227691,
+    "subscribers": 3,
+    "uptime": 950,
+    "node": "v22.23.2"
+}
+
+$ ssh lbsys1 'ls -la ~/assignment6/data; ~/node/bin/node -e ...schema...'
+total 42476
+drwxrwxr-x 2 student student     4096 Sep  4 07:08 .
+drwxrwxr-x 6 student student     4096 Sep  4 07:08 ..
+-rw-rw-r-- 1 student student      118 Sep  4 07:07 .migrated-from-lab5
+-rw-r--r-- 1 student student 39276544 Sep  4 07:23 chat.sqlite
+-rw-r--r-- 1 student student    32768 Sep  4 07:23 chat.sqlite-shm
+-rw-r--r-- 1 student student  4173592 Sep  4 07:23 chat.sqlite-wal

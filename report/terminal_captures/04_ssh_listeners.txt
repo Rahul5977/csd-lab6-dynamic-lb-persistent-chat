@@ -1,0 +1,23 @@
+$ bash scripts/ssh_all.sh 'hostname; hostname -I; ss -tlnp 2>/dev/null | grep -E ":(3000|3001|5270) "'
+===== lbsys1 =====
+[lbsys1] stu78_sys1
+[lbsys1] 172.17.0.70 
+[lbsys1] LISTEN 0      511          0.0.0.0:5270      0.0.0.0:*    users:(("node",pid=255461,fd=21))   
+[lbsys1] LISTEN 0      512          0.0.0.0:3000      0.0.0.0:*    users:(("python3",pid=255529,fd=5)) 
+[lbsys1] exit: 0
+===== lbsys2 =====
+[lbsys2] stu78_sys2
+[lbsys2] 172.17.0.71 
+[lbsys2] LISTEN 0      511          0.0.0.0:3000      0.0.0.0:*    users:(("node",pid=241117,fd=18))
+[lbsys2] exit: 0
+===== lbsys3 =====
+[lbsys3] stu78_sys3
+[lbsys3] 172.17.0.72 
+[lbsys3] LISTEN 0      511          0.0.0.0:3000      0.0.0.0:*    users:(("node",pid=240499,fd=18))
+[lbsys3] exit: 0
+===== lbsys4 =====
+[lbsys4] stu78_sys4
+[lbsys4] 172.17.0.73 
+[lbsys4] LISTEN 0      511          0.0.0.0:3001       0.0.0.0:*    users:(("node",pid=259908,fd=18))                          
+[lbsys4] LISTEN 0      511          0.0.0.0:3000       0.0.0.0:*    users:(("nginx",pid=233485,fd=5),("nginx",pid=231101,fd=5))
+[lbsys4] exit: 0

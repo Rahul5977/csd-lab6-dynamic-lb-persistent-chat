@@ -219,7 +219,7 @@
     if (!res) throw new Error('send failed after retries');
     if (res.duplicate) {
       setPendingStatus(id, 'already stored as #' + res.seq + ' — duplicate suppressed (' + (res.dedup || 'db') + ')', 'dup');
-      var w = pending[id]; if (w) { delete pending[id]; w.classList.remove('pending'); setTimeout(function () { w.remove(); }, 2500); }
+      var w = pending[id]; if (w) { delete pending[id]; w.classList.remove('pending'); setTimeout(function () { w.remove(); }, 12000); }
     } else if (!pending[id]) {
       // WS delivered it before the POST returned — nothing to do.
     } else {

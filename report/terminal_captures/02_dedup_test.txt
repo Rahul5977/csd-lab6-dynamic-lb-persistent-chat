@@ -1,0 +1,8 @@
+$ python3 scripts/dedup_test.py --url http://10.1.75.53:3269 --n 20
+dedup test against http://10.1.75.53:3269, room dedup-test, N=20
+  T1  sent=20  stored=1   duplicate_responses=19  backends=['sys2', 'sys3', 'sys4']  PASS  same id sequentially
+  T2  sent=20  stored=1   duplicate_responses=19  backends=['sys2', 'sys3', 'sys4']  PASS  concurrent, 1 distinct seq
+  T3  sent=2   stored=1   duplicate_responses=1   backends=['sys2', 'sys4']  PASS  seq 3 == 3
+  T4  sent=5   stored=1   duplicate_responses=4   backends=['sys2']  PASS  Idempotency-Key header
+  T5  sent=20  stored=20  duplicate_responses=0   backends=['sys3']  PASS  control: distinct ids
+  db: 112484 messages, 4 duplicates rejected in total (sqlite (node:sqlite, WAL))
