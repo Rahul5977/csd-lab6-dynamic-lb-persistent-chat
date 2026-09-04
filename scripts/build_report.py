@@ -71,6 +71,8 @@ shots_md = "\n\n".join(shots) or "*(screenshots pending)*"
 import html as _html
 terms = []
 for fn in sorted(glob.glob(os.path.join(REPORT, "terminal_captures", "*.txt"))):
+    if os.path.basename(fn).startswith("02_"):      # dedup results are already the table in §6.4
+        continue
     txt = open(fn).read().strip()
     terms.append(f'<div class="term"><strong>{os.path.basename(fn)}</strong><pre>{_html.escape(txt)}</pre></div>')
 terms_md = "\n\n".join(terms) or "*(none)*"
@@ -78,6 +80,7 @@ terms_md = "\n\n".join(terms) or "*(none)*"
 repl = {
     "{{DATE}}": datetime.date.today().strftime("%d %B %Y"),
     "{{LB_CODE}}": "\x00LBCODE\x00",
+    "{{LB_CODE2}}": "\x00LBCODE2\x00",
     "{{DB_CODE}}": "\x00DBCODE\x00",
     "{{T_RT}}": table("response_time_vs_load.md"),
     "{{T_OFFERED}}": table("throughput_vs_offered_load.md"),
@@ -100,8 +103,9 @@ for k, v in repl.items():
     md_src = md_src.replace(k, v)
 
 body = markdown.markdown(md_src, extensions=["tables", "fenced_code", "toc"])
-body = body.replace("\x00LBCODE\x00", code_block("lb/loadbalancer.py", PythonLexer()))
-body = body.replace("\x00DBCODE\x00", code_block("app/db_service.js", JavascriptLexer(), 60, 175))
+body = body.replace("\x00LBCODE\x00", code_block("lb/loadbalancer.py", PythonLexer(), 129, 151))   # cpu_load + score
+body = body.replace("\x00LBCODE2\x00", code_block("lb/loadbalancer.py", PythonLexer(), 270, 305))  # pick()
+body = body.replace("\x00DBCODE\x00", code_block("app/db_service.js", JavascriptLexer(), 132, 166))  # appendTx
 
 
 def inline_img(m):

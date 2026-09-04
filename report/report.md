@@ -89,8 +89,8 @@ clean single-page UI.
 
 ## 4. Load Balancer Design (sys1)
 
-`lb/loadbalancer.py` — pure Python 3 standard library (full source in §5). It is the Assignment-5
-balancer extended in four areas.
+`lb/loadbalancer.py` — pure Python 3 standard library (key code in §5, full source on GitHub). It is the
+Assignment-5 balancer extended in four areas.
 
 ### 4.1 Dynamic backend selection
 
@@ -160,9 +160,14 @@ percentiles, plus `active_backends`), `/lb/events` (timeline of added / degraded
 readmitted / draining / removed / config events), the auto-refreshing dashboard at `/lb/`
 (screenshot §11), and a CSV access log with the active-backend count on every line.
 
-## 5. Load Balancer — Full Source Code
+## 5. Load Balancer — Key Code
+
+The complete balancer (`lb/loadbalancer.py`, ~800 lines) is in the repository linked on the cover
+page. The two parts that make it *dynamic* are the score and the selection:
 
 {{LB_CODE}}
+
+{{LB_CODE2}}
 
 ## 6. Database Persistence and Duplicate Prevention
 
@@ -171,8 +176,7 @@ readmitted / draining / removed / config events), the auto-refreshing dashboard 
 All backends are stateless; every user, session, room and message lives in **one SQLite database
 (WAL mode)** owned by `app/db_service.js` on sys1 and reached over HTTP by every backend. The
 database file (`~/assignment6/data/chat.sqlite`) survives restarts of any backend, of the database
-service, and of the whole cluster — verified in the smoke test (47 assertions, including a database
-restart mid-test) and live (§9.5). Assignment 5's data (717 users, 5 rooms, 111 180 messages) was
+service, and of the whole cluster (verified live in §9.4). Assignment 5's data (717 users, 5 rooms, 111 180 messages) was
 migrated in on first boot, so the old accounts still work. SQLite was chosen because the lab boxes
 allow no root and no package installation; Node 22's built-in `node:sqlite` needs nothing but a
 user-local Node binary, and a real relational engine gives real constraints.
@@ -209,10 +213,10 @@ said:
 
 The 20-way concurrent storm is the important one: twenty connections, spread by the balancer over
 all three backends, POST the same id at the same instant; exactly one row exists afterwards and all
-twenty responses carry the same seq. The smoke test repeats this locally and additionally proves that
-a duplicate of an id stored *before* a database restart is still rejected (the guard is durable, not
-in memory), and that the browser's "Resend last" button — which re-POSTs the previous message with
-the same id — is answered with `duplicate:true` (screenshot §11).
+twenty responses carry the same seq. Test P1 shows that a duplicate of an id stored *before* a
+database restart is still rejected (the guard is durable, not in memory). The browser's "Resend last"
+button — which re-POSTs the previous message with the same id — is answered with `duplicate:true`
+(screenshot §11).
 
 ## 7. Load Generator and Experimental Method
 
@@ -349,24 +353,14 @@ The same 50-user load was then run under each algorithm.
 
 {{C_ALGO}}
 
-**Reading the table.** With sys3 losing half its core to the hog, the balancer's view of it changed
-immediately (`sys_cpu_pct` 100 %, state DEGRADED, EWMA rising) and the **adaptive algorithm cut sys3's
-share from a third to 25 %**, giving the two healthy backends 37–38 % each. That rerouting is worth
-**22 % more throughput than round robin (247 vs 202 req/s)** at the same 50 users. `least_connections`
-— also a dynamic rule, reacting to queue depth rather than to measured time and load — reached a
-similar 257 req/s with sys3 at 27.5 %. Round robin kept feeding sys3 exactly one third: its median
-looks better (39 ms — the two fast backends answer quickly) but its **p99 is 5.8 s** (requests
-queued on the loaded backend), which is precisely the tail that drags closed-loop throughput down.
-Without the hog (last two rows) the three backends are equal and adaptive and round robin are
-indistinguishable (272 vs 275 req/s, 33/36/32 % vs 33/33/33 %) — the dynamic rule costs nothing when
-there is nothing to react to and pays when one backend is quietly slower. (The adaptive rows are the
-median of two repetitions; run-to-run noise on the shared host is ±10 %.)
+With sys3 losing half its core, the balancer saw it at once (`sys_cpu_pct` 100 %, DEGRADED, EWMA
+rising) and the **adaptive algorithm cut sys3's share from a third to 25 %**, which is worth **22 %
+more throughput than round robin (247 vs 202 req/s)** at the same 50 users. Round robin kept feeding
+sys3 one third and paid with a **p99 of 5.8 s** (requests queued on the loaded backend). Without the
+hog the two rules are indistinguishable (272 vs 275 req/s): the dynamic rule costs nothing when there
+is nothing to react to and pays when one backend is quietly slower.
 
-### 9.4 Comparison summary
-
-{{T_SUMMARY}}
-
-### 9.5 Persistence and duplicate prevention on the allotted systems
+### 9.4 Persistence and duplicate prevention on the allotted systems
 
 **Persistence.** The database file on sys1 held 273 769 messages, 719 users and 7 rooms at the end
 of the experiments (`/stats`, terminal capture §11) — every load-generator message of every run, the
@@ -427,44 +421,26 @@ at the balancer and a second balancer with a shared virtual IP would complete th
 
 {{SCREENSHOTS}}
 
-### Terminal captures
+### Terminal evidence
 
 {{TERMINALS}}
 
 ## 12. Challenges Faced and How They Were Solved
 
-1. **A pure "least response time" rule herded all traffic onto one backend.** The first version of the
-   adaptive algorithm picked the minimum score; with sequential traffic every backend has zero in-flight
-   requests, so whichever backend had the lowest EWMA received 60 of 60 requests in the local test.
-   Fixed by power-of-two-choices over the score (§4.1): equal backends now split evenly, slow ones are
-   starved gradually. The local LB test (30 assertions) guards against regression.
-2. **The CPU-hog experiment silently did nothing the first time.** The helper script used `$(case …)`,
-   which macOS's bash 3.2 rejects; the hog never started, so the first algorithm comparison showed
-   three identical 33 % shares. Fixed the script, and — more importantly — discovered that the load
-   signal was wrong for the purpose: a busy loop *reduces* the Node process's own CPU share, which made
-   sys3 look *idler*. The backend now also reports the container's cgroup CPU utilisation against its
-   quota (`sys_cpu_pct`), which sees every tenant of the box; the balancer takes the maximum of process
-   and system CPU. The comparison was re-run with the corrected setup (§9.3).
-3. **Node 18 on sys1 has no SQLite module.** `node:sqlite` needs Node ≥ 22.13; there is no root and no
-   package manager access on the lab boxes. Installed a user-local static Node 22 into `~/node` on sys1
-   (the same technique Assignment 5 used for Node 20 on sys2–4); the Assignment-5 services keep using the
-   system Node 18 untouched.
-4. **`pkill -f` killed the deploy script itself.** The pattern matched the deploying shell's own command
-   line over SSH, so the database service "started" and vanished without a log line. Replaced with
-   tmux-session and pid-file management (the same trap Assignment 5 recorded — this time it cost minutes,
-   not hours).
-5. **The discovery scan admitted the wrong backend.** Before the new backend was deployed on sys3, the
-   candidate scan happily admitted Assignment 5's *old* backend still listening on sys3:3000 — it
-   answered `/health`, after all. Added `discovery.require_version`: a candidate is admitted only if its
-   health JSON reports the expected application version.
-6. **Port 3000 on sys4 was already taken** by my course project (an nginx front end). Since only the
-   balancer needs a public port, the sys4 backend simply listens on 3001 on the private network and
-   nothing of the project was touched.
-7. **Scripted event times were off by the load generator's setup phase** (logging in 200 users takes
-   10–15 s before measurement starts), so "sys3 added at 140 s" really happened at 128 s of measured
-   time. The analysis now derives every event time from the sampled active-backend count, never from the
-   script's sleep offsets.
-8. **The load generator, not the system, capped the open-loop sweep** near 230 arrivals/s. Reported
+1. **A pure "least response time" rule herded all traffic onto one backend.** With sequential traffic
+   every backend has zero in-flight requests, so the backend with the lowest EWMA received every
+   request. Fixed with power-of-two-choices over the score (§4.1): equal backends split evenly, slow
+   ones are starved gradually.
+2. **The load signal was wrong for a loaded box.** A CPU-burning process *reduces* the Node process's
+   own CPU share, which made the loaded backend look idler. The backend now also reports the
+   container's cgroup CPU utilisation against its quota, which sees every tenant of the box, and the
+   balancer scores on the maximum of process and system CPU.
+3. **Node 18 on sys1 has no SQLite module and there is no root on the lab boxes.** Installed a
+   user-local static Node 22 into `~/node` on sys1; the Assignment-5 services keep using the system
+   Node 18 untouched.
+4. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public port,
+   so the sys4 backend listens on 3001 on the private network and nothing of the project was touched.
+5. **The load generator, not the system, capped the open-loop sweep** near 230 arrivals/s. Reported
    honestly by plotting the *actual* offered rate (§8.2) rather than the nominal one.
 
 ## 13. Conclusion
@@ -482,15 +458,3 @@ with none; a SIGKILLed backend cost 0.10 % failed requests and was back in rotat
 restarting; and every duplicate-prevention test through the public URL left exactly one row in the
 database. The previous assignment's URL and direct ports keep working, its files are untouched, and
 the whole system can be redeployed, re-measured and demonstrated from the scripts in the repository.
-
-## Appendix A — Reproduction
-
-```bash
-git clone https://github.com/Rahul5977/csd-lab6-dynamic-lb-persistent-chat && cd csd-lab6-dynamic-lb-persistent-chat
-node app/tests/smoke.js && python3 lb/test_lb.py        # local tests (47 + 30 assertions)
-bash scripts/deploy.sh all                              # Node 22 + DB on sys1, backend on sys2, LB v2 on sys1
-bash scripts/scale.sh sys3 up; bash scripts/scale.sh sys4 up
-bash scripts/sanity_check.sh
-bash scripts/run_experiments.sh && .venv/bin/python scripts/analyze.py && .venv/bin/python scripts/build_report.py
-bash scripts/demo.sh                                    # scripted live demonstration
-```
