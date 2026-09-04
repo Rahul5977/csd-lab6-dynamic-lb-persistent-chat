@@ -68,6 +68,13 @@ for fn, cap in SHOTS:
         shots.append(f'<div class="shot"><strong>{cap}</strong><br><img src="screenshots/{fn}" alt="{cap}"></div>')
 shots_md = "\n\n".join(shots) or "*(screenshots pending)*"
 
+import html as _html
+terms = []
+for fn in sorted(glob.glob(os.path.join(REPORT, "terminal_captures", "*.txt"))):
+    txt = open(fn).read().strip()
+    terms.append(f'<div class="term"><strong>{os.path.basename(fn)}</strong><pre>{_html.escape(txt)}</pre></div>')
+terms_md = "\n\n".join(terms) or "*(none)*"
+
 repl = {
     "{{DATE}}": datetime.date.today().strftime("%d %B %Y"),
     "{{LB_CODE}}": "\x00LBCODE\x00",
@@ -86,6 +93,8 @@ repl = {
     "{{C_FAIL}}": chart("failover_timeline.png", "Figure 6 — Failure and recovery timeline (sys3 killed at 40 s, restarted at 90 s)."),
     "{{C_ALGO}}": chart("algorithm_comparison.png", "Figure 7 — Adaptive vs round robin vs least connections when sys3 is CPU-loaded."),
     "{{SCREENSHOTS}}": shots_md,
+    "{{TERMINALS}}": terms_md,
+    "{{T_SUMMARY}}": table("summary.md"),
 }
 for k, v in repl.items():
     md_src = md_src.replace(k, v)
@@ -131,6 +140,8 @@ img {{ max-width: 100%; page-break-inside: avoid; }}
 .cap {{ font-size: 8.5pt; color: #444; margin-top: 4px; }}
 .shot {{ page-break-inside: avoid; text-align: center; margin: 12px 0; }}
 .shot img {{ max-width: 80%; margin-top: 4px; border: 1px solid #ddd; }}
+.term {{ page-break-inside: avoid; margin: 10px 0; }}
+.term pre {{ font-size: 6.9pt; }}
 .cover {{ text-align: center; padding-top: 55mm; }}
 .cover table {{ width: 72%; margin: 26px auto; font-size: 11pt; }}
 .cover td {{ padding: 5px 10px; }}

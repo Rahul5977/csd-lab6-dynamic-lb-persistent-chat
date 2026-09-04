@@ -80,9 +80,29 @@ setInterval(() => {
 }, 2000).unref();
 let lagT = Date.now();
 setInterval(() => { const n = Date.now(); load.loop_lag_ms = Math.max(0, n - lagT - 500); lagT = n; }, 500).unref();
+// SYSTEM load, not just this process: the container's cgroup CPU usage against
+// its quota (cpu.max). Any other tenant of the box (a CPU hog, another service)
+// shows up here even though it makes the Node process itself look idler.
+let cgQuota = 0, cgLastUsage = 0, cgLastAt = 0;
+try {
+  const [q, per] = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
+  if (q !== 'max') cgQuota = parseInt(q, 10) / parseInt(per, 10);      // cores allowed
+} catch (e) {}
+function cgroupUsageUs() {
+  try { return parseInt(/usage_usec (\d+)/.exec(fs.readFileSync('/sys/fs/cgroup/cpu.stat', 'utf8'))[1], 10); } catch (e) { return -1; }
+}
+setInterval(() => {
+  const u = cgroupUsageUs(), now = Date.now();
+  if (u >= 0 && cgLastAt) {
+    const cores = cgQuota || os.cpus().length;
+    load.sys_cpu_pct = Math.min(100, Math.round((u - cgLastUsage) / ((now - cgLastAt) * 1000) / cores * 1000) / 10);
+  }
+  cgLastUsage = u; cgLastAt = now;
+}, 2000).unref();
 function loadSnapshot() {
   return {
-    cpu_pct: load.cpu_pct, loadavg1: Math.round(os.loadavg()[0] * 100) / 100, cores: os.cpus().length,
+    cpu_pct: load.cpu_pct, sys_cpu_pct: load.sys_cpu_pct ?? null, cpu_quota_cores: cgQuota || null,
+    loadavg1: Math.round(os.loadavg()[0] * 100) / 100, cores: os.cpus().length,
     in_flight: metrics.in_flight, loop_lag_ms: load.loop_lag_ms, rss_mb: Math.round(process.memoryUsage().rss / 1048576),
   };
 }

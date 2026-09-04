@@ -102,6 +102,22 @@ def dist_str(m):
     return " / ".join(f"{k}:{v}%" for k, v in m["dist_pct"].items() if not k.startswith("?"))
 
 
+def detect_events(d):
+    """Actual membership-change times from the sampled active-backend count
+    (the scripted times are offset by the load generator's setup phase)."""
+    ts = d["timeseries_1s"]; labels = [e["label"] for e in d["summary"].get("events", [])]
+    out, prev = [], None
+    for x in ts:
+        a = x["active_backends"]
+        if a < 0:
+            continue
+        if prev is not None and a != prev:
+            out.append({"t": x["t"], "label": labels[len(out)] if len(out) < len(labels) else f"active {prev}->{a}", "active": a})
+        prev = a
+    return out
+
+
+
 # ── Table 1: response time vs load, 1/2/3 backends ─────────────────────────
 levels = sorted({int(m["param"]) for m in med_rows if m["config"] in ("L1", "L2", "L3")})
 lines = ["| Concurrency | Backends | Total | Success | Failed | Err % | Throughput (req/s) | Mean ms | p50 | p90 | p95 | p99 | Active | Distribution | Speed-up vs 1 |",
@@ -190,6 +206,30 @@ for param in ("adaptive_hog", "round_robin_hog", "least_connections_hog", "adapt
     lines.append(f"| {algo} | {'yes' if hog == 'hog' else 'no'} | **{m['rps']}** | {m['p50']} | {m['p95']} | {m['p99']} | {m['errors']:.0f} | {d.get('sys2', 0)}% / **{d.get('sys3', 0)}%** / {d.get('sys4', 0)}% |")
 open(os.path.join(TABLES, "algorithm_comparison.md"), "w").write("\n".join(lines) + "\n")
 
+# ── summary table: the headline numbers side by side ───────────────────────
+lines = ["| Scenario | Configuration | Throughput (req/s) | p50 ms | p95 ms | Failed | Active backends |",
+         "|---|---|---|---|---|---|---|"]
+for c in (100, 200):
+    for n in (1, 2, 3):
+        m = row(f"L{n}", c)
+        if m:
+            lines.append(f"| L: {c} users, closed loop | {n} backend(s) | **{m['rps']}** | {m['p50']} | {m['p95']} | {m['errors']:.0f} ({m['error_pct']} %) | {m['active']} |")
+for r_ in (300.0,):
+    for n in (1, 2, 3):
+        m = row(f"O{n}", r_)
+        if m:
+            lines.append(f"| O: {r_:g} req/s offered | {n} backend(s) | **{m['rps']}** achieved | {m['p50']} | {m['p95']} | {m['errors']:.0f} + {m['dropped']} dropped | {m['active']} |")
+for r in scale_rows:
+    lines.append(f"| SCALE phase {r['phase']} | {r['active']:.0f} backend(s) | **{r['rps']:.1f}** | {r['p50']:.0f} | {r['p95']:.0f} | — | {r['active']:.0f} |")
+for param in ("adaptive_hog", "round_robin_hog", "least_connections_hog"):
+    m = row("ALGO", param)
+    if m:
+        lines.append(f"| ALGO: 50 users, sys3 CPU-loaded | {param.replace('_hog', '')} | **{m['rps']}** | {m['p50']} | {m['p95']} | {m['errors']:.0f} | share sys3 = {m['dist_pct'].get('sys3', 0)} % |")
+if "FAIL_recovery_c100" in full:
+    s_ = full["FAIL_recovery_c100"]["summary"]
+    lines.append(f"| FAIL: 100 users, sys3 killed + restarted | 3 → 2 → 3 backends | **{s_['throughput_rps']}** (whole run) | {s_['latency_ms']['p50']} | {s_['latency_ms']['p95']} | {s_['errors']} ({s_['error_rate_pct']} %) | 2–3 |")
+open(os.path.join(TABLES, "summary.md"), "w").write("\n".join(lines) + "\n")
+
 # ── dedup table ─────────────────────────────────────────────────────────────
 dd = os.path.join(ROOT, "results", "dedup_test.json")
 if os.path.exists(dd):
@@ -261,21 +301,6 @@ if rates:
     plt.tight_layout(); plt.savefig(os.path.join(CHARTS, "throughput_vs_offered_load.png"), dpi=150); plt.close()
 
 
-def detect_events(d):
-    """Actual membership-change times from the sampled active-backend count
-    (the scripted times are offset by the load generator's setup phase)."""
-    ts = d["timeseries_1s"]; labels = [e["label"] for e in d["summary"].get("events", [])]
-    out, prev = [], None
-    for x in ts:
-        a = x["active_backends"]
-        if a < 0:
-            continue
-        if prev is not None and a != prev:
-            out.append({"t": x["t"], "label": labels[len(out)] if len(out) < len(labels) else f"active {prev}->{a}", "active": a})
-        prev = a
-    return out
-
-
 def timeline(rid, fname, title, smooth=5):
     if rid not in full:
         return
@@ -311,8 +336,8 @@ def timeline(rid, fname, title, smooth=5):
     plt.tight_layout(); plt.savefig(os.path.join(CHARTS, fname), dpi=140); plt.close()
 
 
-timeline("SCALE_ramp", "scaling_timeline.png", "Dynamic scaling — rising load, backends added while running (sys3 @140 s, sys4 @200 s)")
-timeline("FAIL_recovery_c100", "failover_timeline.png", "Failure and recovery — sys3 SIGKILLed at 40 s, restarted at 90 s (c = 100)")
+timeline("SCALE_ramp", "scaling_timeline.png", "Dynamic scaling — rising load; sys3 then sys4 started while running (dashed = admitted by the LB)")
+timeline("FAIL_recovery_c100", "failover_timeline.png", "Failure and recovery — sys3 SIGKILLed then restarted under 100 users (dashed = LB ejected / re-admitted)")
 
 # 3. scaling phases bar chart (effect of adding each backend)
 if scale_rows:

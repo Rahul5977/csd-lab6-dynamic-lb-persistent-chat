@@ -127,8 +127,13 @@ class Backend:
         self.ewma_ms = ms if self.ewma_ms is None else (1 - alpha) * self.ewma_ms + alpha * ms
 
     def cpu_load(self):
-        """0..1+ : how busy the backend says it is (max of CPU% and loadavg/cores)."""
+        """0..1 : how busy the backend's SYSTEM is. Prefers the container-wide
+        cgroup CPU utilisation (sys_cpu_pct — sees other tenants of the box),
+        falls back to the process CPU % and the load average per core."""
         cpu = float(self.load.get("cpu_pct", 0) or 0) / 100.0
+        sys_cpu = self.load.get("sys_cpu_pct")
+        if sys_cpu is not None:
+            cpu = max(cpu, float(sys_cpu) / 100.0)
         cores = max(1, int(self.load.get("cores", 1) or 1))
         la = float(self.load.get("loadavg1", 0) or 0) / cores
         return max(cpu, min(la, 4.0))
