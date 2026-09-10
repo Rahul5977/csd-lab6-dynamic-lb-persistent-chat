@@ -1,0 +1,30 @@
+{
+ "run_id": "SIM_u",
+ "board": "static",
+ "url": "http://172.17.0.70:3000",
+ "stages": [
+  {
+   "concurrency": 1000,
+   "budget": 8000,
+   "requests": 9000,
+   "successes": 9000,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 2321.74,
+   "rps": 401.8
+  }
+ ],
+ "mean_response_ms": 2321.74,
+ "total_requests": 9000,
+ "total_successes": 9000,
+ "total_errors": 0,
+ "err_rate_overall": 0.0,
+ "peak_rps": 401.8,
+ "break_concurrency": null,
+ "accepted_msgs": 8000,
+ "delivered": 200,
+ "lost": 7800,
+ "completeness": 0.025,
+ "integrity_note": "/feed returned 200 of 589785 messages in the room"
+}

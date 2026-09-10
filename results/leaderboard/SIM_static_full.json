@@ -1,0 +1,63 @@
+{
+ "run_id": "SIM_static_full",
+ "board": "static",
+ "url": "http://172.17.0.70:3000",
+ "stages": [
+  {
+   "concurrency": 250,
+   "budget": 5000,
+   "requests": 5250,
+   "successes": 5250,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 547.3,
+   "rps": 447.98
+  },
+  {
+   "concurrency": 500,
+   "budget": 5000,
+   "requests": 5500,
+   "successes": 5500,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 977.26,
+   "rps": 490.35
+  },
+  {
+   "concurrency": 750,
+   "budget": 5000,
+   "requests": 5750,
+   "successes": 5750,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 1399.57,
+   "rps": 487.72
+  },
+  {
+   "concurrency": 1000,
+   "budget": 5000,
+   "requests": 6000,
+   "successes": 5989,
+   "errors": 11,
+   "timeouts": 11,
+   "err_rate": 0.00183,
+   "mean_ms": 1859.3,
+   "rps": 484.92
+  }
+ ],
+ "mean_response_ms": 1219.76,
+ "total_requests": 22500,
+ "total_successes": 22489,
+ "total_errors": 11,
+ "err_rate_overall": 0.00049,
+ "peak_rps": 490.35,
+ "break_concurrency": null,
+ "accepted_msgs": 19989,
+ "delivered": 189,
+ "lost": 19800,
+ "completeness": 0.0095,
+ "integrity_note": "/feed returned 200 of 522188 messages in the room"
+}

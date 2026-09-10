@@ -113,6 +113,13 @@ repl = {
     "{{C_ALGO2}}": chart("algorithm_comparison_v2.png",
         "Figure 7 — The threshold rule against round robin, least connections and the adaptive score, "
         "same load and same cluster."),
+    "{{T_LBSTEPS}}": table("leaderboard_steps.md"),
+    "{{T_LADDERS}}": table("leaderboard_ladders.md"),
+    "{{C_LBSTEPS}}": chart("leaderboard_steps.png",
+        "Figure 10 — What each change was worth at 1 000 concurrent users."),
+    "{{C_LADDER}}": chart("leaderboard_ladder.png",
+        "Figure 11 — The evaluation's breakpoint ladder before and after: throughput and mean "
+        "response time against concurrent users."),
     "{{C_FAILPUB}}": chart("failover_public.png",
         "Figure 9 — Failure and recovery on the public routes: per-backend throughput, response time, "
         "active backends and failed requests. sys3 was SIGKILLed at 45 s and restarted at 90 s."),
@@ -138,7 +145,7 @@ body = body.replace("\x00LBCODE2\x00",
                                "def _pick_threshold(self, pool)", "def pick_sticky(self")))  # the threshold rule
 body = body.replace("\x00DBCODE\x00",
                     code_block("app/db_service.js", JavascriptLexer(), *span("app/db_service.js",
-                               "const appendTx = (room, entry)", "// ── One-time migration")))
+                               "function appendOne(room, entry)", "// ── One-time migration")))
 
 
 def inline_img(m):

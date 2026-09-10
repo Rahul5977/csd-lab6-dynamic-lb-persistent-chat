@@ -37,6 +37,23 @@ The database runs on sys3, not next to the load balancer: with both on sys1 the 
 CFS-throttled in half of all scheduling periods and the cluster stalled at 165 req/s. Moving it
 was worth +41 % throughput — see `DECISIONS.md` D-010 and §13 of the report.
 
+## Under the evaluation's load
+
+The course leaderboard drives 250 → 1500 concurrent users through `/message` and `/feed`. Against a
+local copy of its ladders (`loadgen/leaderboard_sim.py`):
+
+| | result |
+|---|---|
+| static ladder (250 → 1000 users, 20 000 requests) | **mean 547 ms, 0 failures**, peak 1 148 req/s |
+| breakpoint ladder (200 → 1500 users) | **34 300 successful requests, held to 1 500 users**, 0 failures |
+| at 1 000 concurrent users, before → after | 368 → 787 req/s, 2 602 → 1 163 ms mean |
+
+Four changes got it there, each isolated by measurement (report §14): the balancer's I/O layer moved
+onto **asyncio** (a thread per connection collapsed from 10 000 req/s to 385 between 500 and 1 000
+connections), **conservative passive ejection** so a connection burst is not mistaken for a dead
+backend, a **keep-alive HTTP client** to the database instead of `fetch()`, and **group commit** in
+SQLite — 20 appends per transaction under load, with the duplicate guard unchanged.
+
 ## Layout
 
 | Path | What |
@@ -45,9 +62,10 @@ was worth +41 % throughput — see `DECISIONS.md` D-010 and §13 of the report.
 | `app/server.js` | Backend v3: client message ids / `Idempotency-Key`, per-backend dedup LRU, load-reporting `/health`, self-registration + heartbeat + deregister with the LB; auth + E2E crypto unchanged from Assignments 4/5 |
 | `app/static/` | Chat UI: optimistic bubbles, retry with the same id, "Resend last" duplicate demo, live cluster panel |
 | `app/tests/smoke.js` | 60 end-to-end assertions (dedup races, persistence across DB restart, registration, the `/message` + `/feed` routes) |
-| `lb/loadbalancer.py` | Dynamic LB (Python 3 stdlib): **threshold** selection on a load index, adaptive P2C scoring, UP/DEGRADED/DOWN/DRAINING, register/discovery/config-watch, dashboard, events |
+| `lb/loadbalancer.py` | Dynamic LB (Python 3 stdlib, **asyncio**): **threshold** selection on a load index, adaptive P2C scoring, UP/DEGRADED/DOWN/DRAINING, register/discovery/config-watch, dashboard, events |
 | `lb/test_lb.py` | 39 LB integration assertions (registration, scan, slow-backend scoring, kill/recover, drain, all algorithms, the threshold rule, `/message` + `/feed` through the LB) |
 | `loadgen/loadgen.py` | Load generator: `--api public` (the required routes) or `--api chat`; closed / open / ramp; random message length and random inter-message interval; 1-s timeseries incl. active backends |
+| `loadgen/leaderboard_sim.py` | A local copy of the course leaderboard's own two ladders (250→1000 and 200→1500 concurrent users), reporting its three metrics including message completeness |
 | `scripts/sysmetrics.py` | Per-container CPU and memory of **all four systems**, once a second (cgroup v2 — `/proc` here describes the whole host) |
 | `scripts/` | `deploy.sh`, `scale.sh` (add/remove/kill a backend live), `cpu_hog.sh`, `run_experiments.sh`, `dedup_test.py`, `analyze.py`, `build_report.py`, `sanity_check.sh`, `rollback_lab5.sh`, `demo.sh` |
 | `results/` · `evidence/` · `report/` | raw runs (JSON), processed CSV, charts, tables, evidence captures, the PDF report |

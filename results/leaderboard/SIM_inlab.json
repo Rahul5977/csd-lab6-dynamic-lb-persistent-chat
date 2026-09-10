@@ -1,0 +1,52 @@
+{
+ "run_id": "SIM_inlab",
+ "board": "static",
+ "url": "http://172.17.0.70:3000",
+ "stages": [
+  {
+   "concurrency": 250,
+   "budget": 2500,
+   "requests": 2750,
+   "successes": 2700,
+   "errors": 50,
+   "timeouts": 50,
+   "err_rate": 0.01818,
+   "mean_ms": 813.89,
+   "rps": 231.34
+  },
+  {
+   "concurrency": 500,
+   "budget": 2500,
+   "requests": 3000,
+   "successes": 2779,
+   "errors": 221,
+   "timeouts": 221,
+   "err_rate": 0.07367,
+   "mean_ms": 1075.39,
+   "rps": 229.13
+  },
+  {
+   "concurrency": 1000,
+   "budget": 2500,
+   "requests": 3500,
+   "successes": 2956,
+   "errors": 544,
+   "timeouts": 539,
+   "err_rate": 0.15543,
+   "mean_ms": 2582.94,
+   "rps": 174.29
+  }
+ ],
+ "mean_response_ms": 1520.0,
+ "total_requests": 9250,
+ "total_successes": 8435,
+ "total_errors": 815,
+ "err_rate_overall": 0.08811,
+ "peak_rps": 231.34,
+ "break_concurrency": null,
+ "accepted_msgs": 6690,
+ "delivered": 0,
+ "lost": 6690,
+ "completeness": 0.0,
+ "integrity_note": "/feed returned 200 of 494688 messages in the room"
+}

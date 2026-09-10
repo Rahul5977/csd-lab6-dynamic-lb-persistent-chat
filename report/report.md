@@ -86,8 +86,8 @@ the utilisation of all four systems.
 
 Everything above is implemented, deployed on the allotted systems, measured and demonstrated in this
 report. Section by section: the required routes are §5, the threshold rule is §6.1, the optimisation
-of the threshold is §10, the response-time and utilisation plots are §11, and §14 states exactly what
-was added and what was left untouched.
+of the threshold is §10, the response-time and utilisation plots are §11, and §15 states exactly what
+was added and what was left untouched. §14 is the work the leaderboard itself prompted.
 
 ## 4. Architecture
 
@@ -95,7 +95,7 @@ was added and what was left untouched.
    my machine: browser tabs + loadgen/loadgen.py  ─── only http://10.1.75.53:3269 ───┐
                                                                                      ▼
  ┌────────────────────────────────────────────────────────────────────────────────────────┐
- │  LOAD BALANCER  sys1:3000  → public 3269   (lb/loadbalancer.py — Python 3 stdlib)      │
+ │  LOAD BALANCER  sys1:3000  → public 3269   (lb/loadbalancer.py — Python 3, asyncio)    │
  │  routes: /message  /feed  /  /api/*  /ws   +  its own /lb/* admin surface              │
  │  THRESHOLD selection: stay on the current backend while load(b) < T, else switch       │
  │      load(b) = max( cpu, in_flight / inflight_cap, ewma_rt / rt_cap )   0=idle 1=full   │
@@ -212,7 +212,9 @@ instead of running `COUNT(*)` per request.
 
 `lb/loadbalancer.py` — pure Python 3 standard library, no pip, no root, no external process. It is
 the previous assignment's balancer extended in four areas: performance-based **threshold** selection,
-three-state health monitoring, live membership, and observability.
+four-state health monitoring, live membership, and observability. Its I/O layer is asyncio — one task
+per connection — because the evaluation drives up to 1 500 concurrent clients and a thread per
+connection cannot survive that on one CPU; §14.2 has the measurement that forced the change.
 
 ### 6.1 Performance-based selection: the threshold rule
 
@@ -423,6 +425,8 @@ samplers alongside the load generator, which is where the utilisation figures in
 | `node app/tests/smoke.js` | 60 | registration, login, sessions, encrypted rooms, message ids, dedup races across two backends, persistence across a database restart, self-registration and graceful deregister, **and the `/message` + `/feed` routes**: both body encodings, a missing `msg`, an id repeated across two different backends, `/feed` totals, truncation and cross-backend read-after-write |
 | `python3 lb/test_lb.py` | 39 | end-to-end routing, a backend started mid-run being self-registered and getting traffic, a backend found by the candidate scan, a slow backend scored down but not ejected, kill → eject → restart → re-admit, drain and remove, every algorithm, config reload, **the threshold rule** (stays on one backend below `T`, spreads above it, counters reported) and the public routes through the balancer |
 | `python3 scripts/dedup_test.py` | 5 scenarios | duplicate prevention against the live cluster through the public URL |
+| `node scripts/ws_check.js` | 2 | a WebSocket upgrade proxied by the balancer, and live delivery over it |
+| `python3 loadgen/leaderboard_sim.py` | — | a local copy of the evaluation's own two ladders, up to 1 500 concurrent users (§14.1) |
 
 All of them pass; §15 carries the captures.
 
@@ -707,7 +711,7 @@ database itself keeps serving. The two are separate processes with separate life
 ### 12.3 Persistence and duplicate prevention on the allotted systems
 
 **Persistence.** At the end of the experiments the database held **735 183 messages, 721 users and 8
-rooms** in a 209 MB file (`/stats`, terminal capture §15): every load-generator message of every run,
+rooms** in a 209 MB file (`/stats`, terminal capture §16): every load-generator message of every run,
 the 461 414 messages of the public feed room, the migrated Assignment-5 history and the demo
 conversations, all served identically by whichever backend the balancer picks. The file survived the
 service being restarted, every backend being restarted, and being **moved from sys1 to sys3** with
@@ -727,7 +731,7 @@ kept warm by the firehose, answers them first. The decisive check is on the live
 SELECT id, COUNT(*) FROM messages GROUP BY id HAVING COUNT(*) > 1;   -- 0 rows
 ```
 
-**not one duplicated message id in 735 183 rows** (terminal capture §15).
+**not one duplicated message id in 735 183 rows** (terminal capture §16).
 
 <div class="pagebreak"></div>
 
@@ -759,7 +763,7 @@ the system were competing for one core and taking turns being frozen.
 `bash scripts/capture_evidence.sh throttle` reproduces this measurement on demand and prints the
 throughput it achieved alongside the counters, so the sample can be checked for validity: if no
 system went above 60 % of its CPU, the run was limited by something in front of the cluster and its
-throttling counters mean nothing. The capture in §15 was taken late in the session, through the
+throttling counters mean nothing. The capture in §16 was taken late in the session, through the
 degraded campus link, and says so itself.
 
 **The check that it was not something else.** Three alternatives were ruled out by measurement rather
@@ -795,14 +799,115 @@ the slowest of the three backends. That is precisely the asymmetry a performance
 supposed to handle, and §11.4 shows it doing so — sys3 receives 28 % of requests where round robin
 would give it 33 %. The alternative, an even split across unequal systems, is measurably worse.
 
-**What is still the limit.** sys1 remains the busiest system at ~70–95 % of its single CPU, so the
-cluster ceiling is now the balancer's own CPU rather than a scheduling artefact. Adding a fourth
-backend would not help; giving sys1 a second core, or running two balancer processes behind
-`SO_REUSEPORT` on a multi-core system, would.
+**What was still the limit, at the time.** sys1 remained the busiest system at ~70–95 % of its single
+CPU, so the ceiling was the balancer's own CPU rather than a scheduling artefact. That held until the
+balancer was moved onto an event loop for the evaluation's concurrency (§14.2), after which sys1 runs
+at under 40 % and the backends — sys3 in particular, which also carries the database — became the
+constraint instead.
 
 <div class="pagebreak"></div>
 
-## 14. Analysis and Discussion
+## 14. Engineering for the Evaluation Load
+
+The course leaderboard tests every submitted URL with its own load generator, on two
+boards, back to back, using only `/message` and `/feed`:
+
+| Board | What it does | Ranked on |
+|---|---|---|
+| **static** | 250 → 500 → 750 → 1000 concurrent users, each stage sending exactly 5 000 requests | **mean response time** of the successful requests |
+| **breakpoint** | 200 → 350 → 500 → 750 → 1000 → 1500 concurrent users, stopping as soon as a stage exceeds 20 % errors | **total successful requests** before it broke |
+
+Everything measured up to §13 used at most 200 concurrent clients. At 250 and beyond
+the system behaved differently enough that it had to be treated as a separate problem.
+
+### 14.1 A local copy of the evaluation
+
+`loadgen/leaderboard_sim.py` reproduces both ladders from the published run records:
+a stage issues `budget + concurrency` requests, so every virtual user posts
+`budget / concurrency` messages and then reads `/feed` once. It reports the same three
+things the leaderboard does — mean response time, successful requests, and **message
+completeness**, the share of messages accepted with a 2xx that can be found in `/feed`
+afterwards. It is asyncio with one keep-alive connection per user, because a
+thread-per-user client cannot itself reach 1 500 concurrent users.
+
+### 14.2 The balancer could not survive the concurrency
+
+Benchmarked against a trivial backend, so that only the proxy was being measured:
+
+| concurrent connections | thread per connection | on an event loop |
+|---|---|---|
+| 12 | 11 606 req/s | 19 290 req/s |
+| 120 | 10 744 req/s | 17 638 req/s |
+| 500 | 9 890 req/s | 13 592 req/s |
+| **1 000** | **385 req/s**, with errors | **10 640 req/s**, none |
+
+The balancer held ten thousand requests a second up to five hundred connections and
+then fell off a cliff. CPython cannot schedule a thousand runnable threads on the one
+CPU this container is given, and the evaluation's top stage is fifteen hundred. The
+proxy's **I/O layer was rewritten on asyncio** — one task per connection instead of one
+OS thread. Everything above it is unchanged and shared: the threshold rule, the four
+health states, registration and discovery, the admin surface, the access log, and the
+WebSocket tunnel the browser chat depends on (`scripts/ws_check.js` proves that one
+end to end, since the balancer's own suite does not cover it). The health probe, the
+candidate scan and the log flush stay on their own threads, so a stalled probe can
+never hold up the loop that is serving traffic.
+
+### 14.3 Three more changes, each isolated by measurement
+
+{{T_LBSTEPS}}
+
+{{C_LBSTEPS}}
+
+* **Backends were being ejected during connection bursts.** The balancer's event log
+  showed `ejected … passive: connect/proxy failure` under load, after which the
+  remaining two took the whole load and the errors cascaded. One refused connection out
+  of a thousand simultaneous ones is not evidence that a backend has died. Passive
+  ejection now needs four consecutive failures from a backend whose health probe is
+  still fresh, the backends listen with a 4 096-deep accept queue, and DEGRADED
+  penalises a backend's load index instead of saturating it — under this load *every*
+  backend answers its probe late, and disqualifying all of them leaves the threshold
+  rule nothing to choose between. A backend that is genuinely gone still fails four
+  attempts within milliseconds, so detection stays effectively immediate.
+* **Every request made a `fetch()` call to the database service.** Node's global fetch
+  carries real per-call overhead, and with the balancer no longer the bottleneck the
+  backends had become one. Replaced with `http.request` over a keep-alive agent.
+* **The database committed one transaction per message.** Node is single-threaded, so
+  every append that arrives while the event loop is busy can be applied in one
+  transaction: appends are queued and flushed on the next tick. Under load this commits
+  **20 messages per transaction**, in batches as large as 185. The duplicate guard is
+  untouched — each entry still goes through the same select-then-insert-on-conflict, and
+  two copies of one id inside a single batch are serialised by the batch itself. A
+  30-way concurrent storm on a single id stores exactly one row.
+
+### 14.4 The result
+
+{{T_LADDERS}}
+
+{{C_LADDER}}
+
+Both ladders now run **without a single failed request**, and the breakpoint board is
+held all the way to 1 500 concurrent users rather than breaking. Driven from my own
+machine against the public URL rather than from inside the lab, the static ladder gives
+a mean of **672 ms** at 941 req/s — the campus link costs something, but not the result.
+
+### 14.5 Message completeness — the one metric not won
+
+The evaluation also reports how many accepted messages come back in `/feed`. With the
+200-message window of §5.2 that share is about 1 %, and the run is badged "lossy".
+
+This is a real trade-off rather than an oversight, and it is worth being explicit about
+it. The evaluation posts twenty to thirty thousand messages and reads `/feed` roughly
+2 500 times in a run. Returning every message on every read means bodies of several
+megabytes and gigabytes of traffic over a two-minute run — on a three-core cluster it is
+not reachable, and the leaderboard shows the same thing: the one submission with
+completeness 1.00 answered 93 % of its requests with an error and served 1 490 requests
+where this system serves 22 500. The window is the honest engineering answer, the true
+total is reported in every response, and `?since=` walks the complete history in order
+(§5.2). Both the count and the paging are the same design a real chat API would use.
+
+<div class="pagebreak"></div>
+
+## 15. Analysis and Discussion
 
 **The threshold rule does what the task asks and is measurably better than round robin.** At the same
 60-client load on three backends it delivers 260 req/s at 447 ms p95 against round robin's 221 req/s
@@ -852,7 +957,7 @@ history would be more robust. The open-loop generator should use an asynchronous
 than ~300 arrivals/s from one process. TLS termination at the balancer and a second balancer behind a
 shared virtual IP would remove the last single point of failure.
 
-## 15. Screenshots and Evidence
+## 16. Screenshots and Evidence
 
 {{SCREENSHOTS}}
 
@@ -860,7 +965,7 @@ shared virtual IP would remove the last single point of failure.
 
 {{TERMINALS}}
 
-## 16. Challenges Faced and How They Were Solved
+## 17. Challenges Faced and How They Were Solved
 
 1. **The cluster stalled at 165 req/s and nothing in the application explained it** — diagnosed as CPU
    quota throttling on sys1 and fixed by moving the database to sys3, worth 41 % throughput (§13).
@@ -884,7 +989,7 @@ shared virtual IP would remove the last single point of failure.
    form-encoded bodies, raw text and query parameters, `GET` as well as `POST`, and eight spellings of
    each field name, so a reasonable client cannot fail to be understood.
 
-## 17. Conclusion
+## 18. Conclusion
 
 The secure group chat now runs on the three allotted systems behind a load balancer that clients reach
 at a single URL, `http://10.1.75.53:3269`, through the two required routes `/message` and `/feed`.
@@ -899,11 +1004,18 @@ Measured on the allotted systems with my own load generator, driving only the re
 random message lengths and random intervals: the threshold rule delivers **260 req/s at 447 ms p95**
 against fixed round robin's **221 req/s at 494 ms**; three backends reach their knee at 50 clients and
 259 req/s where one saturates at 25; at 200 req/s of offered open-loop load a single backend is at
-8.7 s p95 and failing while three backends answer in 3.1 s with **zero** failures; a SIGKILLed backend
-is ejected within one request and back in rotation seconds after restarting; and the utilisation trace
-of all four systems shows the balancer's own CPU, not the backends, as the remaining ceiling. Diagnosing
-that ceiling — CFS throttling on a shared one-CPU container — and moving the database off the
-balancer's system was worth **+41 %** throughput, more than the entire span of the threshold sweep.
+8.7 s p95 and failing while three backends answer in 3.1 s with **zero** failures; and a SIGKILLed
+backend is ejected within one request and back in rotation seconds after restarting.
+
+Two ceilings were found by measurement and removed. The first was CFS throttling on sys1, where the
+balancer and the database were sharing one CPU; moving the database to sys3 was worth **+41 %**
+throughput, more than the entire span of the threshold sweep. The second appeared only at the
+evaluation's concurrency: a thread per connection collapsed from ten thousand requests a second to
+385 between 500 and 1 000 connections, and moving the proxy onto an event loop — together with a
+keep-alive database client and group commit in SQLite — **doubled throughput and halved mean response
+time** at 1 000 users. On the evaluation's own ladders the system now answers **22 500 requests at a
+mean of 547 ms with no failures**, and holds the breakpoint ladder to **1 500 concurrent users**
+instead of breaking.
 
 All backends share one persistent SQLite database in which every message has a unique id and the
 database itself guarantees that a retried, reconnected or concurrently duplicated send is stored once.

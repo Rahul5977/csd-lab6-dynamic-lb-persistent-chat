@@ -1,0 +1,52 @@
+{
+ "run_id": "SIM_async",
+ "board": "static",
+ "url": "http://172.17.0.70:3000",
+ "stages": [
+  {
+   "concurrency": 250,
+   "budget": 2500,
+   "requests": 2750,
+   "successes": 2750,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 604.89,
+   "rps": 398.42
+  },
+  {
+   "concurrency": 500,
+   "budget": 2500,
+   "requests": 3000,
+   "successes": 3000,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 844.86,
+   "rps": 523.21
+  },
+  {
+   "concurrency": 1000,
+   "budget": 2500,
+   "requests": 3500,
+   "successes": 3500,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 1595.91,
+   "rps": 494.44
+  }
+ ],
+ "mean_response_ms": 1057.7,
+ "total_requests": 9250,
+ "total_successes": 9250,
+ "total_errors": 0,
+ "err_rate_overall": 0.0,
+ "peak_rps": 523.21,
+ "break_concurrency": null,
+ "accepted_msgs": 7500,
+ "delivered": 200,
+ "lost": 7300,
+ "completeness": 0.0267,
+ "integrity_note": "/feed returned 200 of 502188 messages in the room"
+}
