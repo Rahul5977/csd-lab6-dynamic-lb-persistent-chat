@@ -58,16 +58,10 @@ SHOTS = [
     ("12_feed_response.png",
      "<b>GET /feed</b> through the load balancer URL — the true room total, how many were returned, the "
      "truncation flag, and every message with its unique id, sequence number, sender and serving backend"),
-    ("01_dashboard_3_backends.png", "Dashboard during the earlier adaptive-algorithm runs — three backends UP, scores, event log"),
-    ("02_dashboard_scaling.png", "Dashboard during the scaling run — sys3 and sys4 admitted while load was running"),
-    ("03_chat_login.png", "Chat login screen served through the load balancer"),
+    ("02_dashboard_scaling.png", "Dashboard during the scaling run — sys3 and sys4 admitted while load was running (§12.1)"),
+    ("03_chat_login.png", "The secure chat still served through the same URL — login screen"),
     ("04_chat_conversation.png", "Conversation: message ids, seq numbers, serving backend, cluster panel"),
     ("05_duplicate_suppressed.png", "'Resend last' — same message id re-sent, server answers duplicate:true, nothing stored twice"),
-    ("06_dashboard_failover.png", "Dashboard with sys3 DOWN during the failure test"),
-    ("07_sanity_check.png", "scripts/sanity_check.sh — whole system + previous assignments green"),
-    ("08_dedup_test.png", "scripts/dedup_test.py through the public URL"),
-    ("09_db_stats.png", "SQLite database service statistics"),
-    ("10_ssh_processes.png", "Backend processes and listeners on the assigned systems"),
 ]
 shots = []
 for fn, cap in SHOTS:
@@ -78,7 +72,7 @@ shots_md = "\n\n".join(shots) or "*(screenshots pending)*"
 import html as _html
 terms = []
 for fn in sorted(glob.glob(os.path.join(REPORT, "terminal_captures", "*.txt"))):
-    if os.path.basename(fn).startswith("02_"):      # dedup results are already the table in §6.4
+    if os.path.basename(fn).startswith("02_"):      # dedup results are already the table in §8.4
         continue
     txt = open(fn).read().strip()
     terms.append(f'<div class="term"><strong>{os.path.basename(fn)}</strong><pre>{_html.escape(txt)}</pre></div>')
@@ -89,22 +83,10 @@ repl = {
     "{{LB_CODE}}": "\x00LBCODE\x00",
     "{{LB_CODE2}}": "\x00LBCODE2\x00",
     "{{DB_CODE}}": "\x00DBCODE\x00",
-    "{{T_RT}}": table("response_time_vs_load.md"),
-    "{{T_OFFERED}}": table("throughput_vs_offered_load.md"),
-    "{{T_SCALE}}": table("scaling_phases.md"),
-    "{{T_FAIL}}": table("failover_phases.md"),
-    "{{T_ALGO}}": table("algorithm_comparison.md"),
     "{{T_DEDUP}}": table("dedup.md"),
-    "{{C_RT}}": chart("response_time_vs_load.png", "Figure 1 — Response time vs load (p50 left, p95 right), 1 / 2 / 3 backends, log-log."),
-    "{{C_TPUT_LOAD}}": chart("throughput_vs_load.png", "Figure 2 — Throughput vs load (closed loop)."),
-    "{{C_OFFERED}}": chart("throughput_vs_offered_load.png", "Figure 3 — Throughput vs offered load (open loop, Poisson arrivals); dashed = ideal."),
-    "{{C_SCALE}}": chart("scaling_timeline.png", "Figure 4 — Dynamic scaling timeline: throughput, response time, active backends and per-backend share; dashed lines = backend added."),
-    "{{C_SCALE_EFFECT}}": chart("scaling_effect.png", "Figure 5 — Effect of adding each backend, per phase of the scaling run."),
-    "{{C_FAIL}}": chart("failover_timeline.png", "Figure 6 — Failure and recovery timeline under 100 users (sys3 SIGKILLed at ~37 s, restarted at ~92 s; dashed = LB ejected / re-admitted)."),
-    "{{C_ALGO}}": chart("algorithm_comparison.png", "Figure 7 — Adaptive vs round robin vs least connections when sys3 is CPU-loaded."),
+    "{{C_SCALE}}": chart("scaling_timeline.png", "Figure 8 — Backends admitted while the application was running: throughput, response time, active backends and per-backend share; dashed lines = a backend added."),
     "{{SCREENSHOTS}}": shots_md,
     "{{TERMINALS}}": terms_md,
-    "{{T_SUMMARY}}": table("summary.md"),
     # --- updated task -------------------------------------------------------
     "{{T_THR}}": table("threshold_sweep.md"),
     "{{T_THRLOW}}": table("threshold_sweep_low.md"),
@@ -113,26 +95,26 @@ repl = {
     "{{T_UTIL}}": table("system_utilisation.md"),
     "{{T_ALGO2}}": table("algorithm_comparison_v2.md"),
     "{{C_THR}}": chart("threshold_sweep.png",
-        "Figure 8 — Threshold sweep. Left and centre: 60 clients, whiskers show the min/max over the "
+        "Figure 1 — Threshold sweep. Left and centre: 60 clients, whiskers show the min/max over the "
         "repetitions. Right: the same sweep at 10 clients, where the threshold decides whether traffic "
         "concentrates or spreads. Dotted line = the chosen T."),
     "{{C_PUBRT}}": chart("pub_response_time_vs_load.png",
-        "Figure 9 — Response time vs load on /message and /feed (p50 left, p95 right), 1 / 2 / 3 "
+        "Figure 2 — Response time vs load on /message and /feed (p50 left, p95 right), 1 / 2 / 3 "
         "backends, log-log."),
     "{{C_PUBTPUT}}": chart("pub_throughput_vs_load.png",
-        "Figure 10 — Throughput vs load, and the effect of adding backends."),
+        "Figure 3 — Throughput vs load, and the effect of adding backends."),
     "{{C_PUBOFF}}": chart("pub_throughput_vs_offered_load.png",
-        "Figure 11 — Throughput vs offered load (open loop, Poisson arrivals); dashed = ideal."),
+        "Figure 4 — Throughput vs offered load (open loop, Poisson arrivals); dashed = ideal."),
     "{{C_UTILRAMP}}": chart("system_utilisation_ramp.png",
-        "Figure 12 — Utilisation of all four systems during the 1 → 200 client ramp, with the client "
+        "Figure 5 — Utilisation of all four systems during the 1 → 200 client ramp, with the client "
         "count and p95 response time underneath. 100 % is one whole CPU, which is each container's quota."),
     "{{C_UTILLOAD}}": chart("system_utilisation_vs_load.png",
-        "Figure 13 — Mean CPU of each of the four systems against offered load, 3 backends."),
+        "Figure 6 — Mean CPU of each of the four systems against offered load, 3 backends."),
     "{{C_ALGO2}}": chart("algorithm_comparison_v2.png",
-        "Figure 14 — The threshold rule against round robin, least connections and the adaptive score, "
+        "Figure 7 — The threshold rule against round robin, least connections and the adaptive score, "
         "same load and same cluster."),
     "{{C_FAILPUB}}": chart("failover_public.png",
-        "Figure 15 — Failure and recovery on the public routes: per-backend throughput, response time, "
+        "Figure 9 — Failure and recovery on the public routes: per-backend throughput, response time, "
         "active backends and failed requests. sys3 was SIGKILLed at 45 s and restarted at 90 s."),
 }
 for k, v in repl.items():

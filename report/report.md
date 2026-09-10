@@ -655,81 +655,29 @@ measurement is only as good as the assurance that the load balancer is what is b
 
 ## 12. Results — Dynamic Scaling, Failure Recovery and Persistence
 
-These are the requirements carried over from the original task. §12.1–12.3 were measured on the
-authenticated chat API with the adaptive algorithm, before the database moved off sys1; §12.4
-repeats the failure test on the required public routes with the threshold algorithm, and §12.5
-covers persistence and duplicate prevention on the live cluster.
+The updated task requires that the balancer detect unavailable backends and stop routing to them,
+and that the shared storage be persistent and duplicate-proof. Those are demonstrated here on the
+live cluster, together with the admission of a backend started while the application is running.
 
-### 12.1 Dynamic scaling: performance after each backend is added
+### 12.1 Backends added while the application is running
 
-The system started with **one** backend (sys2). Load was raised in steps (25 → 50 → 100 users) until
-the single backend was saturated; then `bash scripts/scale.sh sys3 up` and later `… sys4 up` were
-executed on the other systems *while the load generator kept running*. The balancer admitted each
-new backend by itself (registration heartbeat and candidate scan both fired) and the load generator's
-per-second samples of `/lb/stats` show exactly when.
-
-{{T_SCALE}}
+The membership machinery of §6.4 was exercised on its own: the system was started with **one**
+backend (sys2) under a rising load, and `scripts/scale.sh sys3 up`, then `… sys4 up`, were run on the
+other systems *while the load generator kept going*. The balancer admitted each of them by itself —
+the registration heartbeat and the candidate scan both fired within five seconds — and, because a
+never-sampled backend is selected immediately, each began carrying traffic in the very next second.
 
 {{C_SCALE}}
 
-{{C_SCALE_EFFECT}}
+With one backend the system was already at its ceiling at 25 users (~95 req/s, p95 ≈ 2.1 s) and more
+users bought no throughput at all, only queueing delay. Admitting sys3 at ~128 s **doubled throughput
+to ~190 req/s** and halved p95 with the *same* 100 users; admitting sys4 at ~184 s took it to
+**~285 req/s** with a 34 / 34 / 32 % split. **No request failed during either addition** — zero errors
+in 300 seconds. These figures were taken on the authenticated chat API before the database moved off
+sys1, so they are not comparable with §11; what they demonstrate is the admission path, which is
+unchanged.
 
-**How performance changed after each backend was added.** With one backend the system was already
-at its ceiling at 25 users (~95 req/s, p95 ≈ 2.1 s): raising the load to 50 and then 100 users bought
-*no* throughput (105 → 99 req/s) and only pushed queueing delay up — p95 climbed to 4.5 s and then 9 s,
-the classic closed-loop saturation signature (the scaling figure, phases A–C). At ~128 s `scale.sh sys3 up` was
-run on sys3; its first registration heartbeat and the balancer's candidate scan both fired within
-5 s, the `active backends` line steps to 2 and — because a never-sampled backend scores 0 — sys3 was
-carrying real traffic in the very next second (share panel: 52 / 47 %). Throughput **doubled to
-~190 req/s** and p95 halved to 4.2 s with the *same* 100 users. Adding sys4 at ~184 s repeated the
-effect: **~285 req/s**, p95 2.4 s, a near-perfect 34 / 34 / 32 % split. Phase F then doubled the load
-to 200 users: throughput held at ~291 req/s (the three cores are now the ceiling) and p95 rose again
-to 5.7 s. Scaling from one to three backends therefore gave **2.9× throughput** (95–105 → 285–291
-req/s) — near-linear, as expected for CPU-bound backends behind a balancer whose own cost is small —
-and no request failed during either addition (0 errors in 300 s). The `added` events in the dashboard
-(screenshot §15) are the balancer's own record of the two admissions.
-
-### 12.2 Backend failure and recovery under load
-
-{{T_FAIL}}
-
-{{C_FAIL}}
-
-**Failure.** sys3 was SIGKILLed (no graceful deregister — the worst case) at ~37 s while 100 users
-were active. Requests that were in flight on sys3 at that instant, plus the few that the balancer
-sent before its passive check fired, failed: **36 requests out of 34 927 (0.10 %)**, all inside a
-two-second window. The first connection refusal ejected sys3 immediately (`ejected … passive:
-connect/proxy failure` in the event log — no waiting for a health-check interval), and the active
-probe confirmed it. Throughput fell from ~280 to ~184 req/s and p95 rose from 2.4 s to 4.4 s — exactly
-the two-thirds capacity you expect with two of three cores left — and the share panel shows the load
-redistributed 47 / 53 % over sys2 and sys4 without any further errors. The load generator's sends that
-hit the outage were retried with the same message id; they were stored once (the first attempt never
-reached the database, so the retry is a fresh insert — dedup is verified separately in §8.4).
-**Recovery.** `scale.sh sys3 up` at ~90 s: the backend registered itself, the balancer re-admitted it
-after two successful probes (`readmitted` event, active backends back to 3) and, scoring 0 as a fresh
-backend, it took its third of the traffic at once; throughput returned to ~280 req/s within ten
-seconds. Detection-to-ejection time is bounded by max(passive: first failed connect,
-active: 2 × 3 s + timeout) — in this run it was effectively instantaneous.
-
-### 12.3 Dynamic selection vs fixed rotation with one loaded backend
-
-To show that selection really follows load, a CPU-burning process (`python3 -c 'while True: pass'`)
-was started on sys3 — on a 1-core container it takes roughly half of the core away from the backend.
-The same 50-user load was then run under each algorithm.
-
-{{T_ALGO}}
-
-{{C_ALGO}}
-
-With sys3 losing half its core, the balancer saw it at once (`sys_cpu_pct` 100 %, DEGRADED, EWMA
-rising) and the **adaptive algorithm cut sys3's share from a third to 25 %**, which is worth **22 %
-more throughput than round robin (247 vs 202 req/s)** at the same 50 users. Round robin kept feeding
-sys3 one third and paid with a **p99 of 5.8 s** (requests queued on the loaded backend). Without the
-hog the two rules are indistinguishable (272 vs 275 req/s): the dynamic rule costs nothing when there
-is nothing to react to and pays when one backend is quietly slower.
-
-
-### 12.4 Failure and recovery on the required routes
+### 12.2 Backend failure and recovery on the required routes
 
 The same experiment repeated on `/message` and `/feed` with the threshold algorithm: 60 clients for
 150 s, sys3 SIGKILLed at 45 s and restarted at 90 s.
@@ -756,22 +704,30 @@ Because sys3 also hosts the database, this run kills a *backend* on the database
 database itself keeps serving. The two are separate processes with separate lifetimes, which is why
 `scale.sh sys3 kill` takes one backend out of rotation and nothing else.
 
-### 12.5 Persistence and duplicate prevention on the allotted systems
+### 12.3 Persistence and duplicate prevention on the allotted systems
 
-**Persistence.** The database file held 273 769 messages, 719 users and 7 rooms when the original experiments finished (`/stats`, terminal capture §15) — every load-generator message of every run, the
-migrated Assignment-5 history, and the demo conversations, all served identically by whichever backend
-the balancer picks. `dedup_test.py --restart-db` restarted the database service in the middle of the
-test (test P1): the row count was unchanged across the restart (48 → 49 with the probe message),
-the probe message was readable through a different backend afterwards, and re-sending an id stored
-*before* the restart was still answered `duplicate:true` — the guard lives in the database file, not
-in any process's memory. The backends reconnected to the database's firehose by themselves
-(`db_firehose: true` in `/health`). The smoke test exercises the same restart locally on every run.
+**Persistence.** At the end of the experiments the database held **735 183 messages, 721 users and 8
+rooms** in a 209 MB file (`/stats`, terminal capture §15): every load-generator message of every run,
+the 461 414 messages of the public feed room, the migrated Assignment-5 history and the demo
+conversations, all served identically by whichever backend the balancer picks. The file survived the
+service being restarted, every backend being restarted, and being **moved from sys1 to sys3** with
+its write-ahead log checkpointed first — not a row was lost. `dedup_test.py --restart-db` restarts
+the database service in the middle of the test: the row count is unchanged across the restart, the
+probe message is readable through a *different* backend afterwards, and re-sending an id stored
+*before* the restart is still answered `duplicate:true`, so the guard lives in the database file and
+not in any process's memory. The backends reconnect to the firehose by themselves
+(`db_firehose: true` in `/health`), and the smoke test exercises the same restart on every run.
 
-**Duplicate prevention.** All five duplicate scenarios in §8.4 passed through the public URL against
+**Duplicate prevention.** All five duplicate scenarios in §8.4 pass through the public URL against
 three live backends, and the `dedup_log` table holds an audit row for every rejection the database
-itself had to make (10 in total; most duplicates never reach it because the backends' LRU answers
-them first). A SQL check on the live file — `SELECT id FROM messages GROUP BY id HAVING COUNT(*) > 1`
-— returns no rows (terminal capture §15).
+itself had to make — 16 in total, because most duplicates never reach it: the backends' own LRU,
+kept warm by the firehose, answers them first. The decisive check is on the live file itself:
+
+```sql
+SELECT id, COUNT(*) FROM messages GROUP BY id HAVING COUNT(*) > 1;   -- 0 rows
+```
+
+**not one duplicated message id in 735 183 rows** (terminal capture §15).
 
 <div class="pagebreak"></div>
 
@@ -906,15 +862,10 @@ shared virtual IP would remove the last single point of failure.
 
 ## 16. Challenges Faced and How They Were Solved
 
-1. **The cluster stalled at 165 req/s and nothing in the application explained it.** The backends were
-   only 36 % busy. `cpu.stat` showed sys1 being CFS-throttled in half of all scheduling periods
-   because the balancer and the database were sharing its single CPU. Moving the database to sys3 was
-   worth 41 % throughput (§13) — and finding it needed per-container accounting, because `/proc` on
-   these boxes describes the whole physical host.
-2. **`/feed` returning literally every message made the benchmark measure the history, not the
-   system.** At 1 412 messages the response was already 383 KB and 190 ms, growing linearly. Resolved
-   by making the default a 200-message window that always reports the true total and whether it was
-   truncated, with `?limit=all` for the complete history — bounded by default, nothing unreachable.
+1. **The cluster stalled at 165 req/s and nothing in the application explained it** — diagnosed as CPU
+   quota throttling on sys1 and fixed by moving the database to sys3, worth 41 % throughput (§13).
+2. **`/feed` returning every message made the benchmark measure the history, not the system** — fixed
+   with a bounded default window and a paging cursor (§5.2).
 3. **A pure "least response time" rule herded all traffic onto one backend.** With sequential traffic
    every backend has zero in-flight requests, so the one with the lowest EWMA received everything.
    The same trap appears in the threshold rule when several requests cross the threshold at once and
@@ -939,9 +890,10 @@ The secure group chat now runs on the three allotted systems behind a load balan
 at a single URL, `http://10.1.75.53:3269`, through the two required routes `/message` and `/feed`.
 The balancer selects backends by **measured load** — a threshold on an index combining container CPU,
 queue depth and EWMA response time — switching away from the current backend the moment it crosses
-`T = 0.70`, a value chosen by a two-level sweep rather than by assumption. It monitors health in four
-states, ejects an unavailable backend on the first refused connection while keeping a merely slow one
-in service, and admits a backend started while the application is running within one heartbeat.
+**`T = 0.15`**, a value chosen by sweeping the threshold at two load levels rather than by assumption.
+It monitors health in four states, ejects an unavailable backend on the first refused connection while
+keeping a merely slow one in service, and admits a backend started while the application is running
+within one heartbeat.
 
 Measured on the allotted systems with my own load generator, driving only the required routes with
 random message lengths and random intervals: the threshold rule delivers **260 req/s at 447 ms p95**
@@ -954,68 +906,13 @@ that ceiling — CFS throttling on a shared one-CPU container — and moving the
 balancer's system was worth **+41 %** throughput, more than the entire span of the threshold sweep.
 
 All backends share one persistent SQLite database in which every message has a unique id and the
-database itself guarantees that a retried, reconnected or concurrently duplicated send is stored once;
-every duplicate test through the public URL leaves exactly one row. **Nothing was removed to reach
+database itself guarantees that a retried, reconnected or concurrently duplicated send is stored once.
+The database ended the experiments holding **735 183 messages and not one duplicated id**, and it has
+since survived being restarted, having every backend restarted under it, and being moved from one
+system to another without losing a row. **Nothing was removed to reach
 these numbers**: the two required routes are additions, and registration, scrypt login, sessions,
 end-to-end-encrypted rooms and the full `/api/*` surface all still work through the same URL and are
 still covered by the 60-assertion backend suite and the 39-assertion balancer suite, both of which
 pass. The previous assignment's URLs and direct ports keep working, its files on the lab systems are
 untouched, and the whole system can be redeployed, re-measured and demonstrated from the scripts in
 the repository.
-
-<div class="pagebreak"></div>
-
-## 18. Appendix — The Same Sweeps on the Authenticated Chat API
-
-The measurements below drive `/api/*` — register, scrypt login, fetch history, send — rather than
-the two public routes, and were taken with the adaptive algorithm before the database moved off
-sys1. They are kept because they are the evidence for the original task and because they show the
-same system under a much more expensive request mix (a scrypt login costs ~100 ms of a core).
-
-
-### 18.1 Response time vs load (closed loop)
-
-{{T_RT}}
-
-{{C_RT}}
-
-{{C_TPUT_LOAD}}
-
-**Reading the table.** At one user the three configurations are identical (44–46 req/s, p50 ≈ 12 ms):
-a single sequential client is bound by its own round trip Mac → lab → Mac, and no number of backends
-can shorten one request. From ten users upward the backends are the bottleneck and the balancer's
-value is plain: at 10 users **95 → 164 → 225 req/s** (1.7× / 2.4×) with p95 falling from 555 ms to
-197 ms; at 50 users **89 → 177 → 275 req/s** (2.0× / 3.1×) with p95 5.2 s → 1.0 s; at 200 users
-**85 → 189 → 268 req/s** (2.2× / 3.2×) and median response time 772 ms → 217 ms. A single 1-core
-backend saturates at ~90–105 req/s regardless of how many users push it — everything beyond that
-becomes queueing delay (p95 reaches 9 s at 100 users) — while two and three backends move the ceiling
-to ~180 and ~270 req/s. The speed-ups slightly above 3× at 50 and 200 users are within run-to-run
-noise on the shared host (the single-backend runs at those levels happened to land in busier
-minutes); the honest summary is *near-linear scaling, 2.4–3.2× for three backends*. Every run had
-**zero failed requests**, the adaptive algorithm split traffic 49/51 % and 33/34/33 % (it favours
-nobody when the backends are equal), and `Active` confirms the balancer saw exactly the intended
-number of backends throughout each run.
-
-### 18.2 Throughput vs offered load (open loop)
-
-{{T_OFFERED}}
-
-{{C_OFFERED}}
-
-**Reading the table.** In open-loop mode arrivals come at a fixed rate whether or not the system keeps
-up, so the *achieved* curve bends away from the ideal line exactly where the system saturates
-(Figure 3, left) and response time explodes just before it (right). Up to ~80 req/s of real offered
-load all three configurations keep up — throughput follows the ideal line and p95 stays at
-110–215 ms. At ~140 req/s the single backend is already over its knee: p50 352 ms and **p95 8.9 s**
-(a queue that never drains) while two and three backends answer in 231 ms and 181 ms at p95. At
-~230 req/s the single backend collapses — **119 req/s achieved, 41 % of arrivals failed** (2 038,
-of which 797 were shed by the generator's in-flight cap because responses no longer came back), p95
-7.4 s — two backends just cope (205 req/s, 0 failed, but p95 4.5 s: at capacity, queue building) and
-three backends absorb it comfortably (**221 req/s, 0 failed, p95 268 ms**). The offered-load axis
-uses what the generator actually issued: its thread-per-arrival Python implementation tops out at
-~230 arrivals/s, which is why the nominal 300 req/s point is plotted at ~230. Successful/failed
-request counts per point are in the table; the number of active backends was constant within each
-run (`Active` column).
-
-<div class="pagebreak"></div>
-
