@@ -11,6 +11,10 @@ then proves every dynamic behaviour the assignment asks for:
   5. a killed backend is ejected (passive + active) and re-admitted on restart
   6. deregister drains; DELETE removes; /lb/config switches algorithms live
   7. every Lab 5 algorithm is still selectable and distributes traffic
+  8. the THRESHOLD algorithm sticks to one backend below the threshold and
+     switches away the moment its load index crosses it
+  9. the required public routes /message and /feed work through the LB and
+     deduplicate a repeated message id even across two different backends
 Exit code 0 = all pass. Output doubles as evidence/02_lb_local_verification.txt.
 """
 import json
@@ -223,6 +227,61 @@ def main():
     conf = json.load(open(conf_path)); conf["algorithm"] = "least_connections"; json.dump(conf, open(conf_path, "w"))
     time.sleep(2.5)
     ok("algorithm from edited file applied", stats()["algorithm"] == "least_connections")
+
+    print("— 8. threshold algorithm: stick below T, switch above T —")
+    for bid in ("b2", "b4"):
+        if bid in states():
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"http://127.0.0.1:{LB_PORT}/lb/backends/{bid}", method="DELETE")).read()
+            except Exception:
+                pass
+    start_backend("b2")                       # a healthy peer to switch to
+    wait(f"http://127.0.0.1:{B['b2']}/health")
+    wait_state("b2", "UP", 20)
+    post(f"http://127.0.0.1:{LB_PORT}/lb/config",
+         {"algorithm": "threshold", "switch_threshold": 0.95, "explore_pct": 0, "inflight_cap": 24, "rt_cap_ms": 5000})
+    time.sleep(1.0)
+    dist_hi = spray(c, 40)
+    top = max(dist_hi.values()) if dist_hi else 0
+    ok(f"T=0.95 (nothing is loaded): traffic stays on ONE backend {dist_hi}",
+       top >= 38 and len(dist_hi) <= 2)
+    st = stats()
+    ok("stats report the threshold and the pinned backend",
+       st["algorithm"] == "threshold" and st["switch_threshold"] == 0.95 and st["current_backend"] in dist_hi)
+    post(f"http://127.0.0.1:{LB_PORT}/lb/config", {"switch_threshold": 0.0001})
+    time.sleep(0.5)
+    dist_lo = spray(c, 60)
+    ok(f"T~0 (everything is over threshold): traffic spreads {dist_lo}", len(dist_lo) >= 2)
+    ok("switch counter moved", stats()["switches"] > 0)
+    post(f"http://127.0.0.1:{LB_PORT}/lb/config", {"switch_threshold": 0.55, "explore_pct": 5})
+
+    print("— 9. required public routes: /message and /feed —")
+    base = f"http://127.0.0.1:{LB_PORT}"
+    r = urllib.request.urlopen(urllib.request.Request(
+        base + "/message", data=json.dumps({"client-name": "tester", "msg": "hello via the LB"}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST"))
+    first = json.loads(r.read())
+    ok("POST /message accepts client-name + msg", first.get("ok") and not first.get("duplicate") and first.get("seq"))
+    r = urllib.request.urlopen(urllib.request.Request(
+        base + "/message", data=b"client-name=formy&msg=urlencoded+body",
+        headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST"))
+    ok("POST /message accepts a form-encoded body", json.loads(r.read()).get("ok"))
+    dup_id = "lbtest-dup-id-000001"
+    seen = []
+    for _ in range(6):                        # spread over backends: every copy must be a duplicate but the first
+        r = urllib.request.urlopen(urllib.request.Request(
+            base + "/message", data=json.dumps({"client-name": "tester", "msg": "retry", "id": dup_id}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST"))
+        seen.append(json.loads(r.read()))
+    ok("repeated message id stored once, rest reported duplicate",
+       sum(1 for x in seen if not x.get("duplicate")) == 1 and all(x.get("seq") == seen[0]["seq"] for x in seen))
+    feed = json.loads(urllib.request.urlopen(base + "/feed").read())
+    texts = [m.get("text") for m in feed.get("messages", [])]
+    ok(f"GET /feed returns the whole room ({feed.get('count')} messages)", feed.get("ok") and feed.get("count", 0) >= 3)
+    ok("the deduplicated message appears exactly once in /feed",
+       sum(1 for m in feed["messages"] if m.get("id") == dup_id) == 1)
+    ok("/feed carries what /message wrote", "hello via the LB" in texts and "urlencoded body" in texts)
 
     print("\nALL TESTS PASSED" if failures == 0 else f"\n{failures} FAILURES")
     return failures

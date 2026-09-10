@@ -1,16 +1,50 @@
 # Viva preparation — Assignment 6
 
 ## 30-second pitch
-"Clients hit one URL, 10.1.75.53:3269, which is my Python load balancer on sys1. It scores every backend
-continuously — EWMA response time × (1 + in-flight) × (1 + container CPU) — and picks with power-of-two
-choices, so traffic follows real performance instead of a fixed rotation. Backends on sys2, sys3, sys4
-register themselves at boot and every 5 s; the balancer also scans known slots, so I can start a backend
-while the load generator is running and it joins within seconds. All backends are stateless: every
-message goes to one SQLite database on sys1 whose primary key is a client-minted UUID, so a retried or
-duplicated send is stored exactly once. Adding backends took throughput from ~100 to ~190 to ~285 req/s;
-a killed backend is ejected within seconds with 0.1 % failed requests and re-admitted on restart."
+"Clients hit one URL, 10.1.75.53:3269, and use two routes: POST /message with a client name and a
+message, and GET /feed. Behind it my Python load balancer on sys1 gives every backend a load index —
+the worst of its container CPU, the requests I am holding on it, and its EWMA response time — and
+keeps sending to the current backend until that index crosses 0.70, then switches to one still under
+it. 0.70 came from a sweep, not a guess. Backends on sys2, sys3 and sys4 register themselves every
+5 s and the balancer also scans known slots, so a backend started mid-run joins within seconds. All
+backends are stateless: every message goes to one SQLite database whose primary key is the message
+id, so a retried or duplicated send is stored exactly once. Against fixed round robin the threshold
+rule is +18 % throughput and −10 % p95, and the biggest single win in the whole project was finding
+that the balancer and the database were sharing sys1's one CPU — moving the database to sys3 was
+worth +41 %."
 
-## Likely questions
+## Likely questions (updated task)
+- **Why is round robin not enough?** It splits *requests* equally between systems that are not equally
+  able to serve them. sys3 also runs the database, so an equal request share is an unequal work share.
+  Measured: threshold 260 rps / 447 ms p95 vs round robin 221 rps / 494 ms.
+- **What exactly is "the load" you threshold on?** `load(b) = max(cgroup CPU, in_flight/24, ewma_rt/250 ms)`,
+  0 = idle, 1 = saturated. Worst-of-three so no single blind spot hides a busy backend. The in-flight
+  term is measured at the balancer, so the rule reacts inside one request instead of one health interval.
+- **How did you pick T = 0.70?** Swept 0.15–1.00, two reps each, at 60 clients and again at 10, changing
+  it live through POST /lb/config. Scored on p95 + 0.6 × throughput shortfall + 100 × error rate, median
+  over reps. T = 0.70 won both metrics. Honest caveat: the whole sweep spans about 7 %, because at 60
+  clients every backend crosses every threshold immediately — the 10-client sweep is where T really bites.
+- **What stops all requests jumping to the same backend when the threshold trips?** Power-of-two-choices
+  among the candidates still under T. Picking the global minimum would push that one over the threshold too.
+- **Does /feed really return "all messages"?** It returns the newest 200 by default and always reports the
+  true total, whether it was truncated, and the window used; `?limit=all` returns the complete history.
+  At 1 412 messages the full feed was already 383 KB / 190 ms and it grows linearly, so an unbounded
+  default would measure the size of the history rather than the system. Nothing is unreachable.
+- **Did you simplify the app for the leaderboard?** No — /message and /feed are additions. Registration,
+  scrypt login, sessions, end-to-end encrypted rooms and the whole /api surface still work through the
+  same URL, and the suites that cover them grew from 47 to 60 and 30 to 39 assertions.
+- **How do you measure the utilisation of four containers on one host?** /proc describes the whole
+  physical machine, so scripts/sysmetrics.py reads each container's own cgroup v2 accounting
+  (cpu.max, cpu.stat usage_usec, memory.current) once a second over one persistent SSH connection each.
+- **What is the bottleneck now?** sys1. It terminates every connection and copies every response body
+  through one Python process on a one-CPU container; it runs at 70–95 % while the backends sit at 40–65 %.
+  A fourth backend would not help; a second core for sys1, or two balancer processes behind SO_REUSEPORT,
+  would.
+- **How did you prove it was throttling and not something else?** /sys/fs/cgroup/cpu.stat showed 41 of 80
+  scheduling periods throttled. Ruled out the network (the same 163 rps from inside the lab), the proxy
+  code (11–12 k rps in isolation, flat from 12 to 120 connections) and raw CPU speed (only 3.5× slower).
+
+## Likely questions (original task)
 - **Why response time × in-flight × load, not just response time?** Response time alone lags (EWMA) and
   herds; in-flight is the instantaneous queue; CPU catches load the balancer cannot see (another tenant).
 - **Why power-of-two choices?** Pure minimum herds with light traffic (all in-flight = 0). P2C keeps equal
@@ -33,5 +67,19 @@ a killed backend is ejected within seconds with 0.1 % failed requests and re-adm
   Lab 5 files untouched, rollback_lab5.sh.
 
 ## Demo order (scripts/demo.sh)
-sanity → scale down to 1 → add sys3, sys4 under load (dashboard events) → CPU-hog sys3: adaptive vs RR
-→ dedup_test → restart DB + backends, count unchanged → kill sys3, LB ejects, restart, re-admit.
+sanity → the two required routes (/message in three encodings, the same id twice, /feed) → scale down to 1
+→ add sys3, sys4 under load (dashboard events) → CPU-hog sys3: threshold vs round robin, with the live
+load index shown → dedup_test → restart DB + backends, count unchanged → kill sys3, LB ejects, restart,
+re-admit.
+
+## Numbers worth having ready
+| | |
+|---|---|
+| threshold vs round robin, 60 clients, 3 backends | 260 vs 221 req/s · 447 vs 494 ms p95 |
+| chosen threshold | T = 0.70 (index of cpu / in-flight over 24 / EWMA over 250 ms) |
+| knee of the 3-backend curve | 50 clients, 259 req/s |
+| 200 req/s offered, open loop | 1 backend: 8.7 s p95 and failing · 3 backends: 3.1 s, zero failures |
+| moving the database off sys1 | 165 → 233 req/s (+41 %), p50 −29 %, p95 −24 % |
+| sys1 throttling before the move | 41 of 80 scheduling periods |
+| utilisation at 50 clients | sys1 73 % · sys2 44 % · sys3 58 % · sys4 48 % |
+| test suites | 60 backend assertions, 39 balancer assertions, 5 dedup scenarios — all pass |

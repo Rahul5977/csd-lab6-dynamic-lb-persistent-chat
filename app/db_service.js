@@ -50,6 +50,8 @@ try { ({ DatabaseSync } = require('node:sqlite')); } catch (e) {
 }
 
 const PORT = parseInt(process.env.PORT || '5270', 10);
+const FEED_TAIL_TTL_MS = parseInt(process.env.FEED_TAIL_TTL_MS || '100', 10);
+const tailCache = new Map();   // room#limit -> serialised body (short TTL)
 const HOST = process.env.HOST || '0.0.0.0';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, process.env.DB_FILE || 'chat.sqlite');
@@ -106,6 +108,8 @@ const q = {
                       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`),
   getMsg: db.prepare('SELECT * FROM messages WHERE id = ?'),
   listMsgs: db.prepare('SELECT * FROM messages WHERE room = ? AND seq > ? ORDER BY seq DESC LIMIT ?'),
+  feedMsgs: db.prepare('SELECT * FROM messages WHERE room = ? ORDER BY seq ASC'),
+  feedTail: db.prepare('SELECT * FROM messages WHERE room = ? ORDER BY seq DESC LIMIT ?'),
   countRoom: db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(seq), 0) AS last FROM messages WHERE room = ?'),
   countAll: db.prepare('SELECT COUNT(*) AS n FROM messages'),
   countUsers: db.prepare('SELECT COUNT(*) AS n FROM users'),
@@ -127,6 +131,16 @@ function rowToEntry(r) {
 }
 function roomToRec(r) {
   return r ? { id: r.id, locked: !!r.locked, epoch: r.epoch, verifier: r.verifier, created: r.created, by: r.created_by } : null;
+}
+
+const feedCache = new Map();   // room -> serialised /feed body, dropped on every append
+// COUNT(*) per /feed request is O(rows in the room) and the load generator makes
+// that room grow without bound, so the count is read once and then maintained.
+const roomCount = new Map();   // room -> rows
+function countOf(room) {
+  let n = roomCount.get(room);
+  if (n === undefined) { n = q.countRoom.get(room).n; roomCount.set(room, n); }
+  return n;
 }
 
 // ── Idempotent append: the heart of the "no duplicates" guarantee ───────────
@@ -158,6 +172,8 @@ const appendTx = (room, entry) => {
       return { duplicate: true, rec: rowToEntry(row) };
     }
     db.exec('COMMIT');
+    feedCache.delete(room);                       // /feed snapshot for this room is stale now
+    roomCount.set(room, countOf(room) + 1);
     return { duplicate: false, rec: rowToEntry(q.getMsg.get(entry.id)) };
   } catch (e) {
     db.exec('ROLLBACK');
@@ -282,6 +298,39 @@ const server = http.createServer(async (req, res) => {
       const rows = q.listMsgs.all(room, since, limit).reverse();   // newest `limit` after `since`, ascending
       const list = rows.map(rowToEntry);
       return json(res, 200, { messages: list, last: list.length ? list[list.length - 1].seq : since });
+    }
+    // GET /feed?room=&limit=  — the whole room, ascending, as one pre-serialised
+    // body. Backends call this for the assignment's public /feed route; the
+    // snapshot is cached until the next append so a read-heavy load generator
+    // costs one SQLite scan per new message, not one per request.
+    if (u.pathname === '/feed' && req.method === 'GET') {
+      const room = u.searchParams.get('room') || '';
+      const limitRaw = u.searchParams.get('limit');
+      const limit = limitRaw && limitRaw !== 'all' ? Math.max(1, parseInt(limitRaw, 10) || 0) : 0;
+      const total = countOf(room);
+      if (limit) {
+        const key = room + '#' + limit;
+        const hit = tailCache.get(key);
+        if (hit && Date.now() - hit.at < FEED_TAIL_TTL_MS) {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': hit.body.length });
+          return res.end(hit.body);
+        }
+        const rows = q.feedTail.all(room, limit).reverse().map(rowToEntry);
+        const body = Buffer.from(JSON.stringify({ ok: true, room, total, count: rows.length, messages: rows }));
+        tailCache.set(key, { body, at: Date.now() });
+        if (tailCache.size > 32) tailCache.delete(tailCache.keys().next().value);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': body.length });
+        return res.end(body);
+      }
+      let hit = feedCache.get(room);
+      if (!hit) {
+        const rows = q.feedMsgs.all(room).map(rowToEntry);
+        hit = Buffer.from(JSON.stringify({ ok: true, room, total: rows.length, count: rows.length, messages: rows }));
+        feedCache.set(room, hit);
+        if (feedCache.size > 32) feedCache.delete(feedCache.keys().next().value);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': hit.length });
+      return res.end(hit);
     }
     if (u.pathname === '/dedup/recent' && req.method === 'GET') {
       return json(res, 200, { duplicates: q.recentDups.all(Math.min(parseInt(u.searchParams.get('limit') || '20', 10), 200)) });

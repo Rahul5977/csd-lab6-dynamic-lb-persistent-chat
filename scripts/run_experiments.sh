@@ -50,7 +50,7 @@ one_run() {  # $1 run_id, $2 config, $3 param, $4 rep, $5... loadgen args
   local rid="$1" cfg="$2" param="$3" rep="$4"; shift 4
   if [ -f "results/raw/${rid}.json" ]; then log "-- $rid exists, skipping"; return 0; fi
   log "== RUN $rid =="
-  if ! python3 loadgen/loadgen.py --url "$LB_URL" --poll-stats --run-id "$rid" "$@" > "logs/loadgen_${rid}.log" 2>&1; then
+  if ! python3 loadgen/loadgen.py --url "$LB_URL" --api chat --poll-stats --run-id "$rid" "$@" > "logs/loadgen_${rid}.log" 2>&1; then
     log "   RUN FAILED — see logs/loadgen_${rid}.log"; sleep "$COOL"; return 0
   fi
   python3 - "$rid" "$cfg" "$param" "$rep" "$MANIFEST" <<'EOF'

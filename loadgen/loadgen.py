@@ -13,10 +13,23 @@ Modes
                          (users:seconds, ...) for the dynamic-scaling timeline:
                          load rises in steps while backends are added live
 
-Request mix per virtual user (weighted): 10 % login (scrypt), 55 % fetch,
-30 % send, 5 % health. Every SEND carries a client-minted UUID message id and
-is retried (same id) on a transport error, exactly like the browser client —
-so failover experiments show retries being deduplicated, not duplicated.
+API surface  --api public (default)  the two routes the assignment fixes:
+                                     POST /message {client-name, msg}, GET /feed
+             --api chat               the full authenticated app: register/login
+                                     (scrypt), /api/messages GET+POST, /health
+
+Request mix per virtual user (weighted)
+  public:  60 % /message, 40 % /feed
+  chat:    10 % login, 55 % fetch, 30 % send, 5 % health
+Every SEND carries a client-minted UUID message id and is retried (same id) on a
+transport error, exactly like the browser client — so failover experiments show
+retries being deduplicated, not duplicated.
+
+Variability the assignment asks for
+  users     --concurrency N, or --ramp "u:s,u:s,..." to vary N over the run
+  length    --msg-min/--msg-max characters, uniformly random per message
+  interval  --think-min/--think-max seconds, uniformly random between messages
+            (--think sets both), or --rate R for Poisson arrivals
 
 Per request: start time, latency, HTTP status, error class, X-Backend-Id,
 X-LB-Active-Backends, duplicate flag. With --poll-stats the LB's /lb/stats is
@@ -41,6 +54,77 @@ MIX = [("login", 10), ("fetch", 55), ("send", 30), ("health", 5)]
 MIX_EXPANDED = [name for name, w in MIX for _ in range(w)]
 WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet "
          "kilo lima mike november oscar papa quebec romeo sierra tango").split()
+
+
+MIX_PUBLIC = [("message", 60), ("feed", 40)]
+MIX_PUBLIC_EXPANDED = [name for name, w in MIX_PUBLIC for _ in range(w)]
+
+
+def random_text(cfg):
+    """A message of a uniformly random length in characters, built from words so
+    it looks like chat rather than filler."""
+    want = random.randint(cfg.msg_min, cfg.msg_max)
+    out = []
+    n = 0
+    while n < want:
+        w = random.choice(WORDS)
+        out.append(w)
+        n += len(w) + 1
+    return " ".join(out)[:want] or "hi"
+
+
+class PubUser:
+    """One virtual user of the public API: no account, no cookie — just the two
+    routes the load generator on the graders' side will use."""
+
+    def __init__(self, idx, base, cfg):
+        self.idx = idx
+        self.base = urlparse(base)
+        self.name = f"client-{idx:04d}"
+        self.cfg = cfg
+        self.conn = None
+
+    def connect(self):
+        if self.conn:
+            try: self.conn.close()
+            except Exception: pass
+        self.conn = http.client.HTTPConnection(self.base.hostname, self.base.port or 80, timeout=15)
+
+    def setup(self):
+        self.connect()
+
+    def raw(self, method, path, body=None):
+        payload = json.dumps(body).encode() if body is not None else None
+        headers = {"Content-Type": "application/json"} if payload is not None else {}
+        self.conn.request(method, path, payload, headers)
+        resp = self.conn.getresponse()
+        data = resp.read()
+        return resp.status, resp, data
+
+    def one(self, kind, retries):
+        if kind == "feed":
+            st, resp, _ = self.raw("GET", self.cfg.feed_path)
+            return st, resp, False, 1
+        mid = str(uuid.uuid4())
+        body = {"client-name": self.name, "msg": random_text(self.cfg), "id": mid}
+        attempt, last_exc = 0, None
+        while attempt <= retries:
+            attempt += 1
+            try:
+                st, resp, data = self.raw("POST", self.cfg.message_path, body)
+                if st >= 500 and attempt <= retries:
+                    time.sleep(0.05 * attempt)
+                    continue
+                dup = False
+                if st == 200:
+                    try: dup = bool(json.loads(data).get("duplicate"))
+                    except ValueError: pass
+                return st, resp, dup, attempt
+            except (http.client.HTTPException, OSError) as e:
+                last_exc = e
+                self.connect()
+                time.sleep(0.05 * attempt)
+        raise last_exc or RuntimeError("send failed")
 
 
 class VUser:
@@ -152,7 +236,15 @@ def main():
     ap.add_argument("--warmup", type=int, default=10, help="seconds discarded from statistics")
     ap.add_argument("--rate", type=float, default=0, help="open-loop offered load req/s (0 = closed loop)")
     ap.add_argument("--ramp", default="", help="closed-loop schedule users:seconds,... (overrides --concurrency/--duration)")
-    ap.add_argument("--think", type=float, default=0)
+    ap.add_argument("--api", choices=("public", "chat"), default="public",
+                    help="public = the required /message + /feed routes; chat = the full authenticated app")
+    ap.add_argument("--message-path", default="/message")
+    ap.add_argument("--feed-path", default="/feed")
+    ap.add_argument("--think", type=float, default=0, help="fixed pause between requests (sets both --think-min/--think-max)")
+    ap.add_argument("--think-min", type=float, default=None, help="random inter-message interval, lower bound (s)")
+    ap.add_argument("--think-max", type=float, default=None, help="random inter-message interval, upper bound (s)")
+    ap.add_argument("--msg-min", type=int, default=8, help="random message length, lower bound (characters)")
+    ap.add_argument("--msg-max", type=int, default=240, help="random message length, upper bound (characters)")
     ap.add_argument("--retries", type=int, default=2, help="send retries with the same message id")
     ap.add_argument("--poll-stats", action="store_true", help="sample <url>/lb/stats every second")
     ap.add_argument("--room", default="loadtest")
@@ -162,18 +254,24 @@ def main():
     ap.add_argument("--out-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "results", "raw"))
     args = ap.parse_args()
     run_id = args.run_id or f"run_{int(time.time())}"
+    if args.think_min is None: args.think_min = args.think
+    if args.think_max is None: args.think_max = max(args.think, args.think_min)
+    args.msg_max = max(args.msg_min, args.msg_max)
+    mix = MIX_PUBLIC_EXPANDED if args.api == "public" else MIX_EXPANDED
 
     ramp = parse_ramp(args.ramp) if args.ramp else []
     if ramp:
         args.concurrency = max(u for u, _ in ramp)
         args.duration = int(sum(s for _, s in ramp))
     mode = "open" if args.rate else ("ramp" if ramp else "closed")
-    print(f"[loadgen] {run_id}: target={args.url} c={args.concurrency} dur={args.duration}s "
+    print(f"[loadgen] {run_id}: api={args.api} target={args.url} c={args.concurrency} dur={args.duration}s "
           f"warmup={args.warmup}s mode={mode}{'@' + str(args.rate) + 'rps' if args.rate else ''}"
           f"{' ramp=' + args.ramp if ramp else ''}", flush=True)
 
     # ── setup phase (not measured, staggered: scrypt is expensive on 1 core) ──
-    users = [VUser(i, args.url, args.room) for i in range(args.concurrency)]
+    make_user = (lambda i: PubUser(i, args.url, args)) if args.api == "public" \
+        else (lambda i: VUser(i, args.url, args.room))
+    users = [make_user(i) for i in range(args.concurrency)]
     setup_errors = 0
     sem = threading.Semaphore(8)
 
@@ -226,9 +324,9 @@ def main():
         while not stop.is_set():
             if u.idx >= active_users[0]:
                 time.sleep(0.2); continue
-            do_one(u, random.choice(MIX_EXPANDED))
-            if args.think:
-                time.sleep(args.think)
+            do_one(u, random.choice(mix))
+            if args.think_max > 0:      # random inter-message interval
+                time.sleep(random.uniform(args.think_min, args.think_max))
 
     def open_loop_dispatcher():
         i = 0
@@ -239,12 +337,14 @@ def main():
                 dropped[0] += 1
                 record(time.time(), 0, 0, "?", "Dropped", 0, False, 0, "drop")
                 continue
-            kind = random.choice(MIX_EXPANDED)
+            kind = random.choice(mix)
             def fire(u=u, kind=kind):
                 inflight[0] += 1
                 try:
                     # each open-loop request needs its own connection (a user may be busy)
-                    v = VUser(u.idx, args.url, args.room); v.cookie = u.cookie; v.connect()
+                    v = make_user(u.idx)
+                    if args.api == "chat": v.cookie = u.cookie
+                    v.connect()
                     do_one(v, kind)
                     try: v.conn.close()
                     except Exception: pass
@@ -353,6 +453,8 @@ def main():
     summary = {
         "run_id": run_id, "url": args.url, "concurrency": args.concurrency, "duration_s": args.duration,
         "warmup_s": args.warmup, "mode": mode, "rate": args.rate, "ramp": args.ramp, "note": args.note,
+        "api": args.api, "msg_len_chars": [args.msg_min, args.msg_max],
+        "think_s": [args.think_min, args.think_max],
         "started_at": t_begin, "total_requests": len(sample), "success": okc, "errors": errc,
         "error_rate_pct": round(errc / len(sample) * 100, 3) if sample else 0,
         "errors_by_class": errors_by_class, "dropped_arrivals": dropped[0],

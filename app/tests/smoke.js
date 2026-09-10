@@ -237,6 +237,41 @@ const fakeLB = http.createServer((req, res) => {
   r = await fetch(`${base2}/health`).then(x => x.json());
   ok('backends reconnected to the restarted DB firehose', r.db_firehose === true);
 
+  console.log('— required public routes: /message and /feed —');
+  const post1 = async (b, body, ctype) => {
+    const res = await fetch(`${b}/message`, { method: 'POST',
+      headers: { 'Content-Type': ctype || 'application/json' },
+      body: ctype === 'application/x-www-form-urlencoded' ? body : JSON.stringify(body) });
+    return { status: res.status, data: await res.json() };
+  };
+  r = await post1(base1, { 'client-name': 'grader', msg: 'hello public api' });
+  ok('POST /message {client-name, msg} accepted', r.status === 200 && r.data.ok && r.data.duplicate === false);
+  const pubSeq = r.data.seq;
+  r = await post1(base1, 'client-name=formy&msg=form+body', 'application/x-www-form-urlencoded');
+  ok('POST /message accepts a form-encoded body', r.status === 200 && r.data.ok);
+  r = await fetch(`${base1}/message?client-name=queryman&msg=from+the+query+string`).then(x => x.json());
+  ok('GET /message with query parameters accepted', r.ok === true);
+  r = await post1(base1, { 'client-name': 'nameless' });
+  ok('POST /message without msg is rejected', r.status === 400);
+  const pubId = 'smoke-public-dup-000001';
+  const copies = [];
+  for (const b of [base1, base2, base1, base2]) copies.push((await post1(b, { 'client-name': 'dupper', msg: 'retry me', id: pubId })).data);
+  ok('a repeated id is stored once even across two backends',
+     copies.filter(c => !c.duplicate).length === 1 && copies.every(c => c.seq === copies[0].seq));
+  ok('duplicates name the layer that caught them', copies.slice(1).every(c => ['backend-lru', 'database'].includes(c.dedup)));
+  let feed = await fetch(`${base2}/feed`).then(x => x.json());
+  ok(`GET /feed returns the whole public room (${feed.count} messages)`, feed.ok && feed.count >= 4);
+  ok('/feed is served by the backend that was asked', feed.backend === 'test-b2');
+  ok('the deduplicated message appears exactly once in /feed', feed.messages.filter(m => m.id === pubId).length === 1);
+  ok('/feed shows a message written through the OTHER backend',
+     feed.messages.some(m => m.seq === pubSeq && m.text === 'hello public api'));
+  ok('/feed rows carry id, sender and sequence', feed.messages.every(m => m.id && m.from && Number.isInteger(m.seq)));
+  const fresh = await post1(base1, { 'client-name': 'reader', msg: 'read after write' });
+  await new Promise(res => setTimeout(res, 400));
+  feed = await fetch(`${base2}/feed`).then(x => x.json());
+  ok('a message written on one backend is visible in /feed on the other',
+     feed.messages.some(m => m.id === fresh.data.id));
+
   console.log('— graceful deregister on SIGTERM —');
   const b2 = procs.find(p => p.tag === 'test-b2');
   await new Promise(res => { b2.on('exit', res); b2.kill('SIGTERM'); });

@@ -3,7 +3,8 @@
 # deploy.sh — copy + (re)start the Assignment-6 services on the lab systems.
 #
 #   bash scripts/deploy.sh node22          install user-local Node 22 on sys1 (for node:sqlite)
-#   bash scripts/deploy.sh db              SQLite DB service  -> sys1:5270  (tmux "db6")
+#   bash scripts/deploy.sh db              SQLite DB service  -> $DB_SYS:5270 (tmux "db6")
+#   bash scripts/deploy.sh movedb sys3     move the database (data included) to another system
 #   bash scripts/deploy.sh lb              dynamic LB v2      -> sys1:3000  (tmux "lb6", public 3269)
 #   bash scripts/deploy.sh sys2|sys3|sys4  backend v3         -> sys2:3000 / sys3:3000 / sys4:3001
 #   bash scripts/deploy.sh all             node22 + db + sys2 + lb   (sys3/sys4 join dynamically: scripts/scale.sh)
@@ -18,13 +19,21 @@ cd "$(dirname "$0")/.."
 REMOTE_DIR='~/assignment6'
 SYS1_IP=172.17.0.70                     # Docker-bridge address of sys1 as seen by sys2-4
 DB_PORT=5270
+# Which system runs the shared database. sys1 is quota-limited to ONE cpu and it
+# already terminates every client connection as the load balancer; with the DB
+# next to it the two competed for that core and the container was CFS-throttled
+# in half of all 100 ms periods (see the report's bottleneck analysis), so the
+# database lives on sys3 instead.
+DB_SYS="${DB_SYS:-sys3}"
 LB_PORT=3000                            # container port behind public 10.1.75.53:3269
 NODE22="v22.23.2"
 
 # per-system facts (macOS bash 3.2: no associative arrays)
 ssh_host()  { case "$1" in sys1) echo lbsys1;; sys2) echo lbsys2;; sys3) echo lbsys3;; sys4) echo lbsys4;; esac; }
 app_port()  { case "$1" in sys4) echo 3001;; *) echo 3000;; esac; }   # D-002: sys4:3000 is the Contour project
-priv_ip()   { case "$1" in sys2) echo 172.17.0.71;; sys3) echo 172.17.0.72;; sys4) echo 172.17.0.73;; esac; }
+priv_ip()   { case "$1" in sys1) echo 172.17.0.70;; sys2) echo 172.17.0.71;; sys3) echo 172.17.0.72;; sys4) echo 172.17.0.73;; esac; }
+DB_HOST="$(ssh_host "$DB_SYS")"
+DB_IP="$(priv_ip "$DB_SYS")"
 
 # shared registration secret, generated once, kept out of git
 [ -f .env ] || printf 'LB_TOKEN=%s\n' "$(python3 -c 'import secrets;print(secrets.token_hex(16))')" > .env
@@ -43,9 +52,10 @@ wait_ok() {  # $1 ssh alias, $2 url (inside the box), $3 label
   echo "   $3 FAILED to become healthy"; return 1
 }
 
-install_node22() {
-  echo "== Node $NODE22 -> sys1 (~/node) =="
-  ssh lbsys1 "
+install_node22() {   # $1 = ssh alias (default lbsys1)
+  local host="${1:-lbsys1}"
+  echo "== Node $NODE22 -> $host (~/node) =="
+  ssh "$host" "
     set -e
     if ~/node/bin/node -e 'require(\"node:sqlite\")' 2>/dev/null; then echo '   node with sqlite already present:' \$(~/node/bin/node -v); exit 0; fi
     echo '   downloading…'
@@ -57,18 +67,23 @@ install_node22() {
 }
 
 deploy_db() {
-  echo "== DB service -> sys1:$DB_PORT (SQLite) =="
-  push lbsys1 app
-  ssh lbsys1 "
+  echo "== DB service -> $DB_SYS ($DB_HOST:$DB_PORT, SQLite) =="
+  push "$DB_HOST" app
+  ssh "$DB_HOST" "
     set -e
     cd $REMOTE_DIR && mkdir -p data logs
-    tmux kill-session -t db6 2>/dev/null || true     # (no pkill -f here: it would match this very shell)
-    for i in 1 2 3 4 5; do ss -tln | grep -q ':$DB_PORT ' || break; sleep 1; done
+    # stop our previous instance (tmux on sys1, pidfile everywhere else)
+    command -v tmux >/dev/null && tmux kill-session -t db6 2>/dev/null || true
+    [ -f db.pid ] && kill \$(cat db.pid) 2>/dev/null || true
+    for i in 1 2 3 4 5 6; do ss -tln | grep -q ':$DB_PORT ' || break; sleep 1; done
+    ulimit -n 65536 2>/dev/null || true
     # MIGRATE_FROM imports Lab 5's users/rooms/messages once (marker file prevents repeats)
-    tmux new-session -d -s db6 \"cd $REMOTE_DIR && ulimit -n 65536 && PORT=$DB_PORT DATA_DIR=$REMOTE_DIR/data MIGRATE_FROM=\$HOME/assignment5/data ~/node/bin/node app/db_service.js >> db.log 2>&1\"
+    nohup env PORT=$DB_PORT DATA_DIR=$REMOTE_DIR/data MIGRATE_FROM=\$HOME/assignment5/data \
+        \$HOME/node/bin/node app/db_service.js >> db.log 2>&1 < /dev/null &
+    echo \$! > db.pid
   "
-  wait_ok lbsys1 "http://127.0.0.1:$DB_PORT/health" "db" || { ssh lbsys1 "tail -20 $REMOTE_DIR/db.log"; return 1; }
-  ssh lbsys1 "curl -sS -m 3 http://127.0.0.1:$DB_PORT/stats" | python3 -c "import json,sys; d=json.load(sys.stdin); print(f\"   {d['messages']} messages, {d['users']} users, {d['rooms']} rooms, {d['db_bytes']//1024} KB, {d['node']}\")"
+  wait_ok "$DB_HOST" "http://127.0.0.1:$DB_PORT/health" "db" || { ssh "$DB_HOST" "tail -20 $REMOTE_DIR/db.log"; return 1; }
+  ssh "$DB_HOST" "curl -sS -m 3 http://127.0.0.1:$DB_PORT/stats" | python3 -c "import json,sys; d=json.load(sys.stdin); print(f\"   {d['messages']} messages, {d['users']} users, {d['rooms']} rooms, {d['db_bytes']//1024} KB, {d['node']}\")"
 }
 
 deploy_backend() {  # $1 = sys2|sys3|sys4
@@ -81,7 +96,7 @@ deploy_backend() {  # $1 = sys2|sys3|sys4
     export PATH=\"\$HOME/node/bin:\$PATH\"
     command -v node >/dev/null || { echo 'no node — run scripts/install_node.sh $host first'; exit 1; }
     printf 'PORT=%s\nBACKEND_ID=%s\nDB_URL=http://%s:%s\nLB_URL=http://%s:%s\nLB_TOKEN=%s\nADVERTISE_HOST=%s\nADVERTISE_PORT=%s\nLB_HEARTBEAT_S=5\nLOG_LEVEL=info\nUV_THREADPOOL_SIZE=2\n' \
-        '$port' '$sys' '$SYS1_IP' '$DB_PORT' '$SYS1_IP' '$LB_PORT' '$LB_TOKEN' '$ip' '$port' > .env
+        '$port' '$sys' '$DB_IP' '$DB_PORT' '$SYS1_IP' '$LB_PORT' '$LB_TOKEN' '$ip' '$port' > .env
     # stop OUR previous instance (pidfile) and, on sys2/sys3, the Lab 5 backend holding port $port
     [ -f backend.pid ] && kill \$(cat backend.pid) 2>/dev/null || true
     if [ -f ~/assignment5/backend.pid ] && [ '$port' = 3000 ]; then kill \$(cat ~/assignment5/backend.pid) 2>/dev/null || true; fi
@@ -116,11 +131,26 @@ EOF
   wait_ok lbsys1 "http://127.0.0.1:$LB_PORT/lb/health" "lb" || { ssh lbsys1 "tail -20 $REMOTE_DIR/lb.log"; return 1; }
 }
 
-case "${1:?usage: deploy.sh node22|db|lb|sys2|sys3|sys4|all}" in
-  node22)          install_node22 ;;
+# Move the database, data and all, to another system without losing a row.
+move_db() {
+  local from="$1" to="$2"
+  local fh th; fh="$(ssh_host "$from")"; th="$(ssh_host "$to")"
+  echo "== moving the database $from -> $to =="
+  ssh "$fh" "tmux kill-session -t db6 2>/dev/null || true; sleep 2"
+  ssh "$th" "mkdir -p $REMOTE_DIR/data"
+  # checkpoint the WAL into the main file first, then copy the whole data dir
+  ssh "$fh" "cd $REMOTE_DIR && \$HOME/node/bin/node -e \"const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('data/chat.sqlite');d.exec('PRAGMA wal_checkpoint(TRUNCATE)');d.close()\" >/dev/null 2>&1; tar czf - data 2>/dev/null" \
+    | ssh "$th" "cd $REMOTE_DIR && tar xzf - 2>/dev/null"
+  ssh "$th" "ls -la $REMOTE_DIR/data | sed 's/^/   /'"
+  DB_SYS="$to" DB_HOST="$th" DB_IP="$(priv_ip "$to")" deploy_db
+}
+
+case "${1:?usage: deploy.sh node22|db|lb|movedb|sys2|sys3|sys4|all}" in
+  node22)          install_node22 "${2:-lbsys1}" ;;
+  movedb)          move_db "${2:-sys1}" "${3:-$DB_SYS}" ;;
   db)              deploy_db ;;
   lb)              deploy_lb ;;
   sys2|sys3|sys4)  deploy_backend "$1" ;;
-  all)             install_node22; deploy_db; deploy_backend sys2; deploy_lb; echo; echo "sys3/sys4 join on demand: bash scripts/scale.sh sys3 up" ;;
+  all)             install_node22 lbsys1; install_node22 "$DB_HOST"; deploy_db; deploy_backend sys2; deploy_lb; echo; echo "sys3/sys4 join on demand: bash scripts/scale.sh sys3 up" ;;
   *) echo "unknown target $1"; exit 1 ;;
 esac

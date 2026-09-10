@@ -20,7 +20,7 @@ case "${1:-start}" in
     sleep 0.7
     python3 - <<EOF > $RUN/lb.conf.json
 import json
-print(json.dumps({"listen_host":"127.0.0.1","listen_port":$LB,"algorithm":"adaptive",
+print(json.dumps({"listen_host":"127.0.0.1","listen_port":$LB,"algorithm":"threshold","switch_threshold":0.55,"inflight_cap":24,"rt_cap_ms":250,
  "backends":[{"id":"b1","host":"127.0.0.1","port":18001,"weight":1}],
  "health_interval_s":2,"health_timeout_s":4,"fail_threshold":2,"rise_threshold":1,"register_token":"$TOKEN",
  "discovery":{"candidates":[{"host":"127.0.0.1","port":18002},{"host":"127.0.0.1","port":18003}],"interval_s":2},

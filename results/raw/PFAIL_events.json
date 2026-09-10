@@ -1,0 +1,1404 @@
+{
+  "events": [
+    {
+      "t": 1789028354.254,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028354.374,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028354.59,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028354.597,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028354.755,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028354.839,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028355.263,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028366.481,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028375.911,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028379.335,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028397.623,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028399.58,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028399.863,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028401.1,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028402.566,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028402.929,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028403.47,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028404.093,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028406.124,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028407.577,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028408.484,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028409.111,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028409.331,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028409.505,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028410.311,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028410.721,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028410.898,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028411.064,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028411.234,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028411.856,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028412.381,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028413.657,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028414.123,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028414.225,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028415.081,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028415.782,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028416.832,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028419.819,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028420.335,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028422.066,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028423.378,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028423.651,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028424.226,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028425.041,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028426.264,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028426.514,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028427.262,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028427.418,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028427.884,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028428.617,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028429.036,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028429.332,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028429.477,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028429.828,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028430.724,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028430.915,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028432.002,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028432.318,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028432.918,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028433.09,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028433.388,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028433.847,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028434.01,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028434.665,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028435.416,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028436.552,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028438.079,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028438.931,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028439.984,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028441.358,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028441.484,
+      "kind": "ejected",
+      "backend": "sys3",
+      "detail": "passive: connect/proxy failure",
+      "active": 2
+    },
+    {
+      "t": 1789028441.959,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028442.238,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028442.325,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028442.987,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028443.904,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028444.299,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028444.655,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028445.675,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028446.169,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028446.549,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028447.164,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028447.276,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028447.539,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028447.618,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028447.917,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028448.548,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028448.79,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028449.237,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028449.352,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028449.532,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028449.788,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028449.892,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028450.031,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028450.251,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028450.325,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028450.657,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028451.643,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028452.52,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028453.223,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028453.609,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028454.039,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028454.119,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028454.304,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028454.531,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028454.617,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028454.76,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028454.959,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028455.063,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028455.888,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028456.044,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028456.354,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028456.648,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028457.93,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028459.308,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028460.053,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028460.876,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028461.12,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028462.175,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028462.29,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028462.786,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028463.748,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028463.955,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028464.352,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028464.67,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028466.085,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028467.152,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028467.854,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028470.564,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028470.766,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028471.255,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028472.671,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028472.856,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028473.973,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028474.208,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028475.883,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028477.454,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028479.771,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028481.34,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028481.631,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028482.731,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028483.233,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028483.405,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028484.036,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028484.484,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028487.687,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028487.925,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028488.111,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028488.953,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028489.414,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028489.626,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028489.9,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028490.11,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028490.225,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028491.067,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 2
+    },
+    {
+      "t": 1789028491.21,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 2
+    },
+    {
+      "t": 1789028491.745,
+      "kind": "readmitted",
+      "backend": "sys3",
+      "detail": "probe 12 ms",
+      "active": 3
+    },
+    {
+      "t": 1789028492.637,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028492.841,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028493.568,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028500.133,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028501.962,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028504.274,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028504.756,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028505.814,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028507.796,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028509.059,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028509.534,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028512.298,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028512.835,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028514.323,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028515.143,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028515.96,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028516.315,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028517.422,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028518.039,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028518.659,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028520.724,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028522.445,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028523.485,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028524.844,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028525.224,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028525.652,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028525.944,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028526.929,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028527.953,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028528.431,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028529.899,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028530.214,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028531.146,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028531.595,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028532.803,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028535.179,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    },
+    {
+      "t": 1789028535.722,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028535.805,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028538.378,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028542.876,
+      "kind": "switch",
+      "backend": "sys4",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028543.216,
+      "kind": "switch",
+      "backend": "sys2",
+      "detail": "threshold 0.70 exceeded on sys3",
+      "active": 3
+    },
+    {
+      "t": 1789028543.502,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys2",
+      "active": 3
+    },
+    {
+      "t": 1789028545.58,
+      "kind": "switch",
+      "backend": "sys3",
+      "detail": "threshold 0.70 exceeded on sys4",
+      "active": 3
+    }
+  ]
+}

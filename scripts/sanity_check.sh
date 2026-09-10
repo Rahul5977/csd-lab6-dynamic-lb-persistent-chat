@@ -18,8 +18,9 @@ print(f\"   algorithm={d['algorithm']} active_backends={d['active_backends']} to
 for b in d['backends']:
     print(f\"   - {b['id']:<5} {b['host']}:{b['port']:<5} {b['state']:<9} src={b['source']:<8} ewma={b['ewma_ms']} score={b['score']} cpu={(b['load'] or {}).get('cpu_pct')} reqs={b['requests']}\")
 " 2>/dev/null || echo "❌ LB stats unreadable"
-ssh -o BatchMode=yes -o ConnectTimeout=6 lbsys1 "curl -sS -m 4 http://127.0.0.1:5270/stats" 2>/dev/null | python3 -c "
-import json,sys; d=json.load(sys.stdin); print(f\"✅ DB service sys1:5270  sqlite  messages={d['messages']} users={d['users']} rooms={d['rooms']} dups_rejected={d['duplicates_rejected_total']} subscribers={d['subscribers']}\")" 2>/dev/null || echo "❌ DB service sys1:5270"
+export DB_SYS="${DB_SYS:-sys3}"       # the shared database moved off sys1: see DECISIONS D-012
+ssh -o BatchMode=yes -o ConnectTimeout=6 "lb$DB_SYS" "curl -sS -m 4 http://127.0.0.1:5270/stats" 2>/dev/null | python3 -c "
+import json,os,sys; d=json.load(sys.stdin); print(f\"✅ DB service {os.environ['DB_SYS']}:5270  sqlite  messages={d['messages']} users={d['users']} rooms={d['rooms']} dups_rejected={d['duplicates_rejected_total']} subscribers={d['subscribers']}\")" 2>/dev/null || echo "❌ DB service $DB_SYS:5270"
 for s in 2 3 4; do
   p=3000; [ $s = 4 ] && p=3001
   out=$(ssh -o BatchMode=yes -o ConnectTimeout=6 lbsys$s "curl -sS -m 4 http://127.0.0.1:$p/health" 2>/dev/null)

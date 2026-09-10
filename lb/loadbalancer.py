@@ -77,6 +77,11 @@ DEFAULTS = {
     "degrade_cpu_pct": 90,           # backend-reported CPU above this -> DEGRADED
     "ewma_alpha": 0.2,               # weight of the newest sample
     "explore_pct": 5,                # % of adaptive picks that go to a random UP backend
+    # -- threshold algorithm (Assignment 6 updated spec) ---------------------
+    "switch_threshold": 0.55,        # load index at which the current backend is abandoned
+    "inflight_cap": 24,              # in-flight requests that count as "fully loaded"
+    "rt_cap_ms": 250,                # EWMA response time that counts as "fully loaded"
+    "min_dwell_ms": 0,               # optional hysteresis after a switch
     "load_weight": 1.0,              # multiplier on the cpu_load term of the score
     "connect_timeout_s": 3,
     "upstream_timeout_s": 30,
@@ -138,6 +143,22 @@ class Backend:
         la = float(self.load.get("loadavg1", 0) or 0) / cores
         return max(cpu, min(la, 4.0))
 
+    def load_index(self, cfg):
+        """0 = idle, 1 = saturated. The single number the threshold rule compares
+        against `switch_threshold`. Three signals, worst one wins:
+          cpu       system/cgroup CPU from the backend's /health (<= health_interval old)
+          queue     in-flight requests THIS LB is holding on it (instantaneous)
+          latency   EWMA response time against the response-time budget
+        The queue term is what makes the rule react inside one health interval:
+        a backend that starts queueing crosses the threshold immediately."""
+        cpu = self.cpu_load()
+        queue = self.in_flight / max(1.0, float(cfg["inflight_cap"]))
+        lat = 0.0 if self.ewma_ms is None else self.ewma_ms / max(1.0, float(cfg["rt_cap_ms"]))
+        idx = max(cpu, queue, lat)
+        if self.state == DEGRADED:
+            idx = max(idx, 1.0)          # degraded is by definition over threshold
+        return idx / max(1, self.weight)
+
     def score(self, cfg):
         """Lower is better. New backends (no sample) score 0 -> tried at once."""
         if self.ewma_ms is None:
@@ -159,6 +180,7 @@ class Backend:
             "ewma_ms": round(self.ewma_ms, 1) if self.ewma_ms is not None else None,
             "probe_ms": round(self.probe_ms, 1) if self.probe_ms is not None else None,
             "score": round(self.score(cfg), 1),
+            "load_index": round(self.load_index(cfg), 3),
             "load": self.load,
             "latency_ms": {"p50": pct(50), "p95": pct(95), "p99": pct(99)},
             "since": round(time.time() - self.added_at),
@@ -171,12 +193,17 @@ class LB:
         self.cfg = dict(DEFAULTS)
         self.backends = []
         self.rr_index = 0
+        self.active_count = 0        # cached len(routable_backends()) — see refresh_active()
+        self.current_id = None       # threshold algorithm: the backend traffic is pinned to
+        self.switches = 0            # how many times the threshold rule moved that pin
+        self.last_switch = 0.0
         self.lock = threading.Lock()
         self.started = time.time()
         self.total_requests = 0
         self.total_errors = 0
         self.events = deque(maxlen=200)
         self.log_lock = threading.Lock()
+        self.log_buf = []
         self.log_fh = None
         self.conf_mtime = 0
         self.reload()
@@ -184,7 +211,7 @@ class LB:
     # -- events ---------------------------------------------------------------
     def event(self, kind, backend_id, detail=""):
         ev = {"t": round(time.time(), 3), "kind": kind, "backend": backend_id, "detail": detail,
-              "active": len(self.routable_backends())}
+              "active": self.refresh_active()}
         self.events.append(ev)
         print(f"[lb] {kind:<12} {backend_id:<8} {detail}  (active={ev['active']})", flush=True)
 
@@ -220,7 +247,7 @@ class LB:
         new_log = not os.path.exists(log_path)
         if self.log_fh:
             self.log_fh.close()
-        self.log_fh = open(log_path, "a", buffering=1)
+        self.log_fh = open(log_path, "a", buffering=262144)
         if new_log:
             self.log_fh.write("ts,client,method,path,backend,upstream_ms,status,bytes,active_backends\n")
         print(f"[lb] config loaded: algorithm={cfg['algorithm']}, "
@@ -267,6 +294,13 @@ class LB:
     def routable_backends(self):
         return [b for b in self.backends if b.routable()]
 
+    def refresh_active(self):
+        """`active_count` is read on every proxied request (response header + access
+        log). Recomputing the list there cost two allocations per request, so the
+        health loop and every membership change refresh this counter instead."""
+        self.active_count = sum(1 for b in self.backends if b.routable())
+        return self.active_count
+
     def pick(self, client_ip, exclude=()):
         """Choose a backend for this request using the configured algorithm."""
         pool = [b for b in self.routable_backends() if b.id not in exclude]
@@ -274,6 +308,8 @@ class LB:
             return None
         algo = self.cfg["algorithm"]
         with self.lock:
+            if algo == "threshold":
+                return self._pick_threshold(pool)
             if algo in ("adaptive", "least_response_time"):
                 fresh = [b for b in pool if b.ewma_ms is None]
                 if fresh:                              # never-sampled backend: try it now
@@ -303,6 +339,56 @@ class LB:
             self.rr_index = (self.rr_index + 1) % len(pool)
             return pool[self.rr_index]
 
+    def _pick_threshold(self, pool):
+        """THRESHOLD algorithm — the updated assignment's explicit requirement:
+        keep sending to the current backend while its load stays below a defined
+        threshold, and switch to another suitable backend as soon as it does not.
+
+            load_index(current) <  T   -> keep using it
+            load_index(current) >= T   -> switch to a backend still under T
+                                          (power-of-two-choices among them, so
+                                          concurrent requests do not all herd
+                                          onto the same replacement)
+            no backend under T         -> everything is hot: send to the lowest
+                                          score, i.e. degrade gracefully rather
+                                          than refuse traffic
+
+        This is deliberately not round-robin: an idle cluster concentrates work
+        on one warm backend (better cache locality, fewer cold connections) and
+        the load itself, not a counter, decides when to spread out."""
+        cfg = self.cfg
+        T = float(cfg["switch_threshold"])
+        fresh = [b for b in pool if b.ewma_ms is None]
+        if fresh:                                   # a newly discovered backend: measure it now
+            self.current_id = fresh[0].id
+            return fresh[0]
+        if len(pool) > 1 and random.random() * 100 < cfg["explore_pct"]:
+            return random.choice(pool)              # keeps every backend's estimate fresh
+        cur = next((b for b in pool if b.id == self.current_id), None)
+        if cur is not None and cur.load_index(cfg) < T:
+            return cur                              # under threshold -> stay put
+        if cur is not None and cfg["min_dwell_ms"] and \
+                (time.time() - self.last_switch) * 1000 < cfg["min_dwell_ms"]:
+            return cur                              # hysteresis: too soon to move again
+        under = [b for b in pool if b.load_index(cfg) < T and b is not cur]
+        # Power-of-two-choices in BOTH branches. Picking the single global minimum
+        # would make every concurrent request that crosses the threshold jump to the
+        # same replacement, and that backend would then cross the threshold itself —
+        # sampling two candidates and keeping the better one spreads the switch.
+        candidates = under or [b for b in pool if b is not cur] or pool
+        a, b = random.choice(candidates), random.choice(candidates)
+        key = (lambda x: (x.score(cfg), x.in_flight)) if under \
+            else (lambda x: (x.load_index(cfg), x.score(cfg), x.in_flight))
+        chosen = min((a, b), key=key)
+        if chosen.id != self.current_id:
+            self.switches += 1
+            self.last_switch = time.time()
+            if self.switches % 25 == 1:             # timeline for the report, not a log flood
+                self.event("switch", chosen.id,
+                           "threshold %.2f exceeded on %s" % (T, cur.id if cur else "-"))
+        self.current_id = chosen.id
+        return chosen
+
     def pick_sticky(self, client_ip, tried):
         """WebSocket connections use ip_hash so reconnects re-pin."""
         pool = [b for b in self.routable_backends() if b.id not in tried]
@@ -312,9 +398,27 @@ class LB:
 
     # -- access log -----------------------------------------------------------
     def log(self, client, method, path, backend_id, ms, status, nbytes):
+        """Access log. Lines are accumulated and flushed by flush_log() once a
+        second: line-buffered writing cost one syscall per proxied request, which
+        is real money when the balancer is the busiest process on its system."""
+        line = (f"{time.time():.3f},{client},{method},{path},{backend_id},"
+                f"{ms:.1f},{status},{nbytes},{self.active_count}\n")
         with self.log_lock:
-            self.log_fh.write(f"{time.time():.3f},{client},{method},{path},{backend_id},"
-                              f"{ms:.1f},{status},{nbytes},{len(self.routable_backends())}\n")
+            self.log_buf.append(line)
+            if len(self.log_buf) >= 512:
+                self._drain_locked()
+
+    def _drain_locked(self):
+        if not self.log_buf:
+            return
+        self.log_fh.write("".join(self.log_buf))
+        self.log_buf.clear()
+
+    def flush_log(self):
+        with self.log_lock:
+            self._drain_locked()
+        try: self.log_fh.flush()
+        except OSError: pass
 
 
 LB_STATE = LB()
@@ -395,6 +499,8 @@ def health_loop():
             if b.state == DOWN and b.source != "config" and b.down_since and \
                     time.time() - b.down_since > cfg["prune_after_s"]:
                 LB_STATE.remove_backend(b.id)
+        LB_STATE.refresh_active()
+        LB_STATE.flush_log()
         time.sleep(cfg["health_interval_s"])
 
 
@@ -458,24 +564,51 @@ def read_head(sock_file):
 
 
 def get_upstream(backend, timeout):
-    """Reuse a pooled keep-alive socket if one is idle, else connect fresh."""
+    """Reuse a pooled keep-alive connection if one is idle, else connect fresh.
+    The pool holds (socket, buffered reader) pairs: allocating a fresh reader per
+    request was measurable overhead once the LB itself became the busiest process
+    on sys1 (see the report's bottleneck analysis)."""
     with backend.lock:
         while backend.pool:
-            s = backend.pool.popleft()
+            s, uf = backend.pool.popleft()
             s.setblocking(False)
             try:
                 if s.recv(1, socket.MSG_PEEK):
-                    s.close(); continue
-                s.close(); continue
+                    close_pair(s, uf); continue        # unread data = stale connection
+                close_pair(s, uf); continue            # peer closed it
             except BlockingIOError:
                 s.setblocking(True); s.settimeout(timeout)
-                return s, True
+                return s, uf, True
             except OSError:
-                try: s.close()
-                except OSError: pass
+                close_pair(s, uf)
     s = socket.create_connection(backend.addr(), timeout=LB_STATE.cfg["connect_timeout_s"])
     s.settimeout(timeout)
-    return s, False
+    tune_socket(s)
+    return s, s.makefile("rb", buffering=IO_BUF), False
+
+
+IO_BUF = 262144          # buffered-reader size and socket buffer target
+
+
+def tune_socket(s):
+    """Big TCP buffers + no Nagle. Bodies here are tens of kilobytes and the hop
+    to the backends crosses a container bridge, so a small receive buffer turns
+    one logical read into a dozen recv() syscalls — which is what actually costs
+    the load balancer its CPU on a one-core system."""
+    try:
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, IO_BUF)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, IO_BUF)
+    except OSError:
+        pass
+
+
+def close_pair(s, uf):
+    for x in (uf, s):
+        if x is None:
+            continue
+        try: x.close()
+        except OSError: pass
 
 
 def pump(src, dst):
@@ -517,7 +650,7 @@ def build_upstream_head(first, headers, hmap, client_ip, is_ws):
 def handle_client(client, client_addr):
     client_ip = client_addr[0]
     client.settimeout(60)
-    cf = client.makefile("rb")
+    cf = client.makefile("rb", buffering=IO_BUF)
     try:
         while True:
             first, headers, hmap = read_head(cf)
@@ -543,7 +676,7 @@ def handle_client(client, client_addr):
                      and hmap.get(b"upgrade", b"").lower() == b"websocket")
 
             tried = set()
-            upstream = pooled = backend = None
+            upstream = uf = pooled = backend = None
             while True:
                 backend = LB_STATE.pick(client_ip, exclude=tried) if not is_ws \
                     else LB_STATE.pick_sticky(client_ip, tried)
@@ -553,7 +686,7 @@ def handle_client(client, client_addr):
                     LB_STATE.log(client_ip, method.decode(), path.decode(), "-", 0.0, 503, 0)
                     return
                 try:
-                    upstream, pooled = get_upstream(backend, LB_STATE.cfg["upstream_timeout_s"])
+                    upstream, uf, pooled = get_upstream(backend, LB_STATE.cfg["upstream_timeout_s"])
                     break
                 except OSError:
                     tried.add(backend.id)
@@ -567,12 +700,13 @@ def handle_client(client, client_addr):
             try:
                 upstream.sendall(head + body)
                 if is_ws:
+                    try: uf.close()
+                    except OSError: pass
                     threading.Thread(target=pump, args=(client, upstream), daemon=True).start()
                     pump(upstream, client)
                     LB_STATE.log(client_ip, "WS", path.decode(), backend.id, (time.time() - t0) * 1000, 101, 0)
                     return
 
-                uf = upstream.makefile("rb")
                 rfirst, rheaders, rhmap = read_head(uf)
                 if rfirst is None:
                     raise OSError("upstream sent no response")
@@ -585,7 +719,7 @@ def handle_client(client, client_addr):
                     if line.split(b":", 1)[0].strip().lower() == b"connection":
                         continue
                     out.append(line)
-                out.append(b"X-LB-Active-Backends: " + str(len(LB_STATE.routable_backends())).encode() + b"\r\n")
+                out.append(b"X-LB-Active-Backends: " + str(LB_STATE.active_count).encode() + b"\r\n")
                 out.append(b"Connection: keep-alive\r\n" if r_clen is not None else b"Connection: close\r\n")
                 out.append(b"\r\n")
                 client.sendall(b"".join(out))
@@ -594,13 +728,13 @@ def handle_client(client, client_addr):
                 if r_clen is not None:
                     remaining = int(r_clen)
                     while remaining:
-                        chunk = uf.read(min(65536, remaining))
+                        chunk = uf.read(min(IO_BUF, remaining))
                         if not chunk:
                             raise OSError("upstream truncated body")
                         client.sendall(chunk); nbytes += len(chunk); remaining -= len(chunk)
                 else:
                     while True:
-                        chunk = uf.read1(65536)
+                        chunk = uf.read1(IO_BUF)
                         if not chunk:
                             break
                         client.sendall(chunk); nbytes += len(chunk)
@@ -616,19 +750,18 @@ def handle_client(client, client_addr):
                     with backend.lock:
                         if len(backend.pool) < 32:
                             upstream.settimeout(LB_STATE.cfg["upstream_timeout_s"])
-                            backend.pool.append(upstream)
+                            backend.pool.append((upstream, uf))
                         else:
-                            upstream.close()
+                            close_pair(upstream, uf)
                 else:
-                    upstream.close()
+                    close_pair(upstream, uf)
                 if r_clen is None:
                     return
             except OSError:
                 backend.errors += 1
                 LB_STATE.total_errors += 1
                 eject_now(backend)
-                try: upstream.close()
-                except OSError: pass
+                close_pair(upstream, uf)
                 LB_STATE.log(client_ip, method.decode(), path.decode(), backend.id, (time.time() - t0) * 1000, 502, 0)
                 send_error(client, 502, "Upstream failed mid-request")
                 return
@@ -651,7 +784,9 @@ def stats_dict():
         "algorithm": lb.cfg["algorithm"], "version": "v2-dynamic",
         "uptime_s": round(time.time() - lb.started, 1),
         "total_requests": lb.total_requests, "total_errors": lb.total_errors,
-        "active_backends": len(lb.routable_backends()),
+        "active_backends": lb.refresh_active(),
+        "switch_threshold": lb.cfg["switch_threshold"], "inflight_cap": lb.cfg["inflight_cap"],
+        "rt_cap_ms": lb.cfg["rt_cap_ms"], "current_backend": lb.current_id, "switches": lb.switches,
         "backends": [b.snapshot(lb.cfg) for b in lb.backends],
         "candidates": lb.cfg["discovery"].get("candidates", []),
         "recent_events": list(lb.events)[-10:],
@@ -671,9 +806,9 @@ DASHBOARD = """<!doctype html><meta charset=utf-8>
  ul{font-family:ui-monospace,monospace;font-size:12px;padding-left:18px}
 </style>
 <h1>Dynamic load balancer — sys1:3269</h1>
-<p class=muted>algorithm <b>%(algo)s</b> · <b>%(active)d active backend(s)</b> of %(n)d · uptime %(up).0fs · %(tot)d requests · %(err)d errors · auto-refresh 2s</p>
+<p class=muted>algorithm <b>%(algo)s</b> · switch threshold <b>%(thr)s</b> · pinned to <b>%(cur)s</b> · %(sw)d switches · <b>%(active)d active backend(s)</b> of %(n)d · uptime %(up).0fs · %(tot)d requests · %(err)d errors · auto-refresh 2s</p>
 <table><tr><th>backend</th><th>addr</th><th>source</th><th>state</th><th>score ↓</th><th>EWMA ms</th><th>probe ms</th>
-<th>cpu %%</th><th>load1</th><th>in-flight</th><th>requests</th><th>errors</th><th>p50/p95 ms</th><th>share</th></tr>%(rows)s</table>
+<th>load idx</th><th>cpu %%</th><th>load1</th><th>in-flight</th><th>requests</th><th>errors</th><th>p50/p95 ms</th><th>share</th></tr>%(rows)s</table>
 <h3>Recent events</h3><ul>%(events)s</ul>
 <p class=muted>JSON: <a href=/lb/stats>/lb/stats</a> · <a href=/lb/events>/lb/events</a> · reload config: POST /lb/reload · register: POST /lb/register</p>"""
 
@@ -693,12 +828,12 @@ def serve_admin(client, method, path, hmap, body, client_ip):
             s = b.snapshot(lb.cfg)
             share = 100.0 * b.requests / total
             rows += ("<tr><td>%s</td><td>%s:%d</td><td>%s</td><td class=%s>%s</td><td>%s</td><td>%s</td><td>%s</td>"
-                     "<td>%s</td><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%.0f / %.0f</td>"
+                     "<td>%.2f</td><td>%s</td><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%.0f / %.0f</td>"
                      "<td><div class=bar><i style='width:%.0f%%'></i></div>%.1f%%</td></tr>" % (
                          s["id"], s["host"], s["port"], s["source"], s["state"], s["state"],
                          s["score"], s["ewma_ms"] if s["ewma_ms"] is not None else "—",
                          s["probe_ms"] if s["probe_ms"] is not None else "—",
-                         s["load"].get("cpu_pct", "—"), s["load"].get("loadavg1", "—"),
+                         s["load_index"], s["load"].get("cpu_pct", "—"), s["load"].get("loadavg1", "—"),
                          s["in_flight"], s["requests"], s["errors"],
                          s["latency_ms"]["p50"], s["latency_ms"]["p95"], share, share))
         events = "".join("<li>%s  %-11s %-7s %s (active=%d)</li>" % (
@@ -707,7 +842,8 @@ def serve_admin(client, method, path, hmap, body, client_ip):
         out = (DASHBOARD % {"algo": lb.cfg["algorithm"], "active": len(lb.routable_backends()),
                             "n": len(lb.backends), "up": time.time() - lb.started,
                             "tot": lb.total_requests, "err": lb.total_errors,
-                            "rows": rows, "events": events}).encode()
+                            "thr": lb.cfg["switch_threshold"], "cur": lb.current_id or "—",
+                            "sw": lb.switches, "rows": rows, "events": events}).encode()
         ctype = b"text/html; charset=utf-8"
     elif path in (b"/lb/register", b"/lb/deregister") and method == b"POST":
         token = lb.cfg.get("register_token", "")
@@ -730,14 +866,32 @@ def serve_admin(client, method, path, hmap, body, client_ip):
         bid = path[len(b"/lb/backends/"):].decode()
         out, ctype = json.dumps({"ok": lb.remove_backend(bid)}).encode(), b"application/json"
     elif path == b"/lb/config" and method == b"POST":
-        # runtime tuning, e.g. {"algorithm":"round_robin"} — merged, not persisted
+        # Runtime tuning, e.g. {"switch_threshold":0.6} — this is what the threshold
+        # sweep drives. Values are also written back to lb.conf.json so that a later
+        # reload (or the config watcher) does not undo them.
         try:
             patch = json.loads(body.decode() or "{}")
-            allowed = {"algorithm", "explore_pct", "load_weight", "degrade_ms", "ewma_alpha", "health_interval_s"}
+            allowed = {"algorithm", "explore_pct", "load_weight", "degrade_ms", "ewma_alpha",
+                       "health_interval_s", "switch_threshold", "inflight_cap", "rt_cap_ms", "min_dwell_ms"}
             applied = {k: v for k, v in patch.items() if k in allowed}
-            lb.cfg.update(applied)
-            lb.event("config", "-", json.dumps(applied))
-            out, ctype = json.dumps({"ok": True, "applied": applied}).encode(), b"application/json"
+            with lb.lock:
+                lb.cfg.update(applied)
+                if applied:
+                    lb.switches = 0
+                    lb.current_id = None       # start each sweep point from a clean pin
+            if applied:
+                try:
+                    disk = json.load(open(CONF_PATH))
+                    disk.update(applied)
+                    with open(CONF_PATH, "w") as fh:
+                        json.dump(disk, fh, indent=2)
+                    lb.conf_mtime = os.path.getmtime(CONF_PATH)
+                except OSError:
+                    pass
+                lb.event("config", "-", json.dumps(applied))
+            out, ctype = json.dumps({"ok": True, "applied": applied,
+                                     "algorithm": lb.cfg["algorithm"],
+                                     "switch_threshold": lb.cfg["switch_threshold"]}).encode(), b"application/json"
         except ValueError as e:
             out, ctype, code = json.dumps({"ok": False, "error": str(e)}).encode(), b"application/json", 400
     elif path == b"/lb/config":
@@ -771,8 +925,16 @@ def send_error(client, code, msg):
 
 # ───────────────────────────── main ─────────────────────────────────────────
 
+def log_flusher():
+    while True:
+        time.sleep(1.0)
+        LB_STATE.flush_log()
+
+
 def main():
     signal.signal(signal.SIGHUP, lambda *_: LB_STATE.reload())
+    LB_STATE.refresh_active()
+    threading.Thread(target=log_flusher, daemon=True).start()
     threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=discovery_loop, daemon=True).start()
 
@@ -789,7 +951,7 @@ def main():
             print(f"[lb] accept error (surviving): {e}", flush=True)
             time.sleep(0.2)
             continue
-        client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        tune_socket(client)
         threading.Thread(target=handle_client, args=(client, addr), daemon=True).start()
 
 

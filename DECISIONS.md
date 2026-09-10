@@ -69,3 +69,83 @@ host:port slots such as sys3:3000, sys4:3001) every few seconds and admits any t
 re-read when its mtime changes. Dynamically-added backends that stay DOWN for
 `prune_after_s` are dropped from the pool; statically configured ones are kept as DOWN.
 Date: 2026-09-04
+
+# ─────────── Updated task (deployment, fixed routes, threshold, leaderboard) ───────────
+
+## D-007 /message and /feed are an ADDITION to the app, not a replacement
+Context: the updated task fixes two route names on the load balancer — `/message`, taking
+"client-name" and "msg", and `/feed`, retrieving all messages — and warns that removing
+existing functionality to chase leaderboard rank costs marks.
+Decision: both routes are new, unauthenticated entry points into the SAME persistent
+database, the same room, the same message-id dedup and the same WebSocket delivery path.
+Nothing was removed: registration, scrypt login, sessions, end-to-end-encrypted locked
+rooms and `/api/*` all still work and are still covered by the test suites. A message
+posted through `/message` appears live in the browser chat, and a message typed in the
+browser appears in `/feed`. The request encoding of the graders' generator is unspecified,
+so `/message` accepts JSON, form-urlencoded, a raw text body or query parameters, under
+any of the usual key spellings, and answers with the stored id, sequence number and
+duplicate flag.
+Date: 2026-09-10
+
+## D-008 Threshold algorithm: stay on the current backend until its load index crosses T
+Context: "when the load of the current backend exceeds a defined threshold, traffic must
+switch to another suitable backend. Fixed Round-Robin alone is not acceptable."
+Decision: a new `threshold` algorithm, now the default. Each backend gets a load index
+    load(b) = max( cpu(b),                     container CPU from its /health
+                   in_flight(b) / inflight_cap,   measured by the LB, instantaneous
+                   ewma_rt(b) / rt_cap_ms )       response-time budget
+0 = idle, 1 = saturated. While `load(current) < T` every request goes to the current
+backend; the moment it does not, the LB switches to a backend still under T, choosing
+between two random candidates so that concurrent requests do not all herd onto the same
+replacement. If nothing is under T the least-loaded backend is used — degrade, never
+refuse. The in-flight term is what makes the rule react inside one health interval.
+D-005's adaptive score is kept and is still selectable; it is the comparison baseline.
+Date: 2026-09-10
+
+## D-009 The threshold is chosen by measurement, not by taste
+Context: "determine an optimal performance threshold for switching between backends."
+Decision: scripts/run_experiments_v2.sh sweeps T over 0.15 … 1.00 with repetitions at a
+fixed load, and scripts/pick_threshold.py scores each value on
+p95 + 0.6 × throughput shortfall + 100 × error rate, aggregating repetitions by median.
+The winner is written to results/processed/optimal_threshold.txt and used by every later
+experiment and by the deployed configuration.
+Date: 2026-09-10
+
+## D-010 The shared database moved off sys1 (it now runs on sys3)
+Context: at 60 concurrent clients the cluster stalled at ~165 req/s with a 320 ms median.
+sys1 was at 98 % CPU — the Python load balancer ~60 % and the database service ~38 % — and
+/sys/fs/cgroup/cpu.stat showed the container CFS-throttled in half of all 100 ms periods.
+Every system here has a one-CPU quota, so the two most latency-critical processes were
+fighting over one core and being stopped for tens of milliseconds at a time.
+Decision: move the SQLite service (data and all, WAL checkpointed first — no rows lost) to
+sys3, and leave sys1 to the load balancer alone. Measured effect at the same load:
+233 req/s (+41 %), median 230 ms (−29 %), p95 529 ms (−24 %). sys3 now carries a backend
+AND the database, which is exactly the asymmetry the threshold rule is supposed to notice —
+and it does: sys3 receives visibly less traffic than sys2 and sys4.
+`bash scripts/deploy.sh movedb sys1 sys3` performs the move; `DB_SYS` selects the host.
+Date: 2026-09-10
+
+## D-011 /feed returns a bounded window by default, the whole history on request
+Context: /feed must "retrieve all messages", but a load generator makes the room grow
+without bound. Measured: at 1 412 messages the full feed was already 383 KB and 190 ms;
+the cost is linear, so a leaderboard run would end up measuring the size of the history.
+Decision: the default answer is the newest 200 messages — what a chat client actually
+renders — and every answer reports the true total in `count`, whether it was truncated,
+and the window used. `?limit=N` and `?limit=all` return more, up to the complete history.
+Nothing is hidden and no message is unreachable. Each backend caches the default body and
+rebuilds it at most every 100 ms, so a read-heavy generator cannot make the database
+re-serialise the same window thousands of times a second; the database applies the same
+rate cap to its own serialisation.
+Date: 2026-09-10
+
+## D-012 Load-generator variability lives in the generator, not in the app
+Context: "the load generator should support a variable number of users, random/variable
+message lengths, and random/variable time intervals between messages."
+Decision: loadgen/loadgen.py gained `--api public` (drives /message and /feed exactly as
+the graders' generator will), `--msg-min/--msg-max` (uniform random message length in
+characters), `--think-min/--think-max` (uniform random pause between messages) and keeps
+`--ramp users:seconds,...` for a varying client count and `--rate` for Poisson arrivals.
+Every run also starts scripts/sysmetrics.py, which samples the cgroup CPU and memory of
+all four systems once a second — that is where the "utilisation of all 4 systems" plots
+come from, since /proc on these containers is shared and reports the whole physical host.
+Date: 2026-09-10

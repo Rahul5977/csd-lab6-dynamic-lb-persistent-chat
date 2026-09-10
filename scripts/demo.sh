@@ -16,13 +16,24 @@ echo "STEP 1 — whole-system health (LB, DB, backends, previous assignments)"
 bash scripts/sanity_check.sh
 pause
 
+echo "STEP 1b — THE TWO REQUIRED ROUTES, through the load balancer URL only"
+echo "   POST /message (JSON):"; curl -sS -m 10 -X POST $LB/message -H 'Content-Type: application/json' -d '{"client-name":"demo","msg":"hello from the demo"}'; echo
+echo "   POST /message (form):"; curl -sS -m 10 -X POST $LB/message -d 'client-name=demo2&msg=form+encoded'; echo
+echo "   the same id twice — stored once:"
+for i in 1 2; do curl -sS -m 10 -X POST $LB/message -H 'Content-Type: application/json' -d '{"client-name":"demo","msg":"retry","id":"demo-fixed-id-0001"}'; echo; done
+echo "   GET /feed:"; curl -sS -m 20 $LB/feed | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+print('   ', {k:v for k,v in d.items() if k!='messages'})
+for m in d['messages'][-4:]: print(f\"    seq={m['seq']} from={m['from']} via={m['via']}: {m.get('text','')[:40]}\")"
+pause
+
 echo "STEP 2 — start from ONE backend: stop sys3 and sys4 (graceful deregister)"
 bash scripts/scale.sh sys3 down; bash scripts/scale.sh sys4 down; sleep 8; pool
 echo "   24 requests — all served by sys2:"; whoami_burst
 pause
 
 echo "STEP 3 — DYNAMIC ADDITION: start sys3 while a load burst is running; watch the LB pick it up"
-python3 loadgen/loadgen.py --url $LB --concurrency 40 --duration 45 --warmup 0 --poll-stats --run-id demo_scale --out-dir results/demo > logs/demo_scale.log 2>&1 &
+python3 loadgen/loadgen.py --url $LB --api public --concurrency 40 --duration 45 --warmup 0 --poll-stats --run-id demo_scale --out-dir results/demo > logs/demo_scale.log 2>&1 &
 sleep 15; echo "   t=15s: bash scripts/scale.sh sys3 up"; bash scripts/scale.sh sys3 up; sleep 6; pool
 sleep 8;  echo "   t=29s: bash scripts/scale.sh sys4 up"; bash scripts/scale.sh sys4 up; sleep 6; pool
 wait
@@ -35,11 +46,13 @@ EOF
 echo "   (dashboard: $LB/lb/ shows the 'added' events)"
 pause
 
-echo "STEP 4 — DYNAMIC SELECTION: CPU-hog sys3, traffic moves away from it (adaptive), not under round_robin"
+echo "STEP 4 — THRESHOLD SELECTION: CPU-hog sys3, traffic moves away from it; round_robin cannot see it"
 bash scripts/cpu_hog.sh sys3 start; sleep 8; pool
-echo "   adaptive:";    curl -sS -X POST $LB/lb/config -H 'Content-Type: application/json' -d '{"algorithm":"adaptive"}' >/dev/null; whoami_burst 40 | tr ' ' '\n' | sort | uniq -c | tr '\n' ' '; echo
+echo "   load index per backend (the number the threshold rule compares against T):"
+curl -sS -m 5 $LB/lb/stats | python3 -c "import json,sys; d=json.load(sys.stdin); print('    T =', d['switch_threshold']); [print(f\"    {b['id']}: load_index={b['load_index']} cpu={(b['load'] or {}).get('sys_cpu_pct')}% ewma={b['ewma_ms']}ms\") for b in d['backends']]"
+echo "   threshold:";   curl -sS -X POST $LB/lb/config -H 'Content-Type: application/json' -d '{"algorithm":"threshold","switch_threshold":0.7}' >/dev/null; whoami_burst 40 | tr ' ' '\n' | sort | uniq -c | tr '\n' ' '; echo
 echo "   round_robin:"; curl -sS -X POST $LB/lb/config -H 'Content-Type: application/json' -d '{"algorithm":"round_robin"}' >/dev/null; whoami_burst 40 | tr ' ' '\n' | sort | uniq -c | tr '\n' ' '; echo
-curl -sS -X POST $LB/lb/config -H 'Content-Type: application/json' -d '{"algorithm":"adaptive"}' >/dev/null
+curl -sS -X POST $LB/lb/config -H 'Content-Type: application/json' -d '{"algorithm":"threshold","switch_threshold":0.7}' >/dev/null
 bash scripts/cpu_hog.sh sys3 stop
 pause
 
@@ -48,12 +61,12 @@ python3 scripts/dedup_test.py --url $LB --n 20 --out results/demo/dedup_demo.jso
 pause
 
 echo "STEP 6 — PERSISTENCE: restart the DB service and every backend; the data is still there"
-BEFORE=$(ssh lbsys1 "curl -sS -m 3 http://127.0.0.1:5270/stats" | python3 -c "import json,sys;print(json.load(sys.stdin)['messages'])")
+BEFORE=$(ssh lbsys3 "curl -sS -m 3 http://127.0.0.1:5270/stats" | python3 -c "import json,sys;print(json.load(sys.stdin)['messages'])")
 bash scripts/deploy.sh db | tail -1
 for s in sys2 sys3 sys4; do bash scripts/scale.sh $s down > /dev/null; done; sleep 3
 for s in sys2 sys3 sys4; do bash scripts/scale.sh $s up | tail -1; done; sleep 6
-AFTER=$(ssh lbsys1 "curl -sS -m 3 http://127.0.0.1:5270/stats" | python3 -c "import json,sys;print(json.load(sys.stdin)['messages'])")
-echo "   messages before = $BEFORE, after full restart = $AFTER  (SQLite file on sys1: ~/assignment6/data/chat.sqlite)"
+AFTER=$(ssh lbsys3 "curl -sS -m 3 http://127.0.0.1:5270/stats" | python3 -c "import json,sys;print(json.load(sys.stdin)['messages'])")
+echo "   messages before = $BEFORE, after full restart = $AFTER  (SQLite file on sys3: ~/assignment6/data/chat.sqlite)"
 pool
 pause
 
