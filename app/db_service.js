@@ -122,7 +122,7 @@ const q = {
   purgeSess: db.prepare('DELETE FROM sessions WHERE expires < ?'),
 };
 
-const stats = { requests: 0, appended: 0, duplicates_rejected: 0, started };
+const stats = { requests: 0, appended: 0, duplicates_rejected: 0, batches: 0, batch_max: 0, started };
 
 function rowToEntry(r) {
   const e = { id: r.id, seq: r.seq, room: r.room, from: r.sender, ts: r.ts, kind: r.kind, via: r.via };
@@ -149,39 +149,83 @@ function countOf(room) {
 // Runs as ONE transaction. Node is single-threaded and DatabaseSync is
 // synchronous, so two backends POSTing the same id at the same instant are
 // serialised here; the second one finds the row and is reported as duplicate.
-const appendTx = (room, entry) => {
+// One entry, applied inside a transaction that is already open. Returns the same
+// shape appendTx used to: {duplicate, rec}.
+function appendOne(room, entry) {
+  const existing = q.getMsg.get(entry.id);
+  if (existing) {
+    q.logDup.run(entry.id, room, entry.via || null, Date.now());
+    return { duplicate: true, rec: rowToEntry(existing) };
+  }
+  const seq = q.nextSeq.get(room).seq;
+  const extra = {};
+  for (const k of Object.keys(entry)) {
+    if (!['id', 'seq', 'room', 'from', 'ts', 'kind', 'text', 'env', 'via'].includes(k)) extra[k] = entry[k];
+  }
+  const res = q.insMsg.run(entry.id, room, seq, entry.from, entry.ts || Date.now(), entry.kind,
+    entry.kind === 'enc' ? null : (entry.text ?? null),
+    entry.kind === 'enc' ? JSON.stringify(entry.env) : null,
+    entry.via || null, Date.now(), Object.keys(extra).length ? JSON.stringify(extra) : null);
+  if (res.changes === 0) {                        // the same id twice inside one batch
+    q.logDup.run(entry.id, room, entry.via || null, Date.now());
+    return { duplicate: true, rec: rowToEntry(q.getMsg.get(entry.id)) };
+  }
+  feedCache.delete(room);                         // /feed snapshot for this room is stale now
+  if (roomCount.has(room)) roomCount.set(room, roomCount.get(room) + 1);
+  return { duplicate: false, rec: rowToEntry(q.getMsg.get(entry.id)) };
+}
+
+// ── Group commit ────────────────────────────────────────────────────────────
+// One BEGIN IMMEDIATE per message costs a write-ahead-log frame and a transaction
+// round trip each time, and under the evaluation's load the database was the
+// busiest system in the cluster. Node is single-threaded, so every append that
+// arrives while the event loop is busy can be applied in ONE transaction: the
+// appends are queued and flushed on the next tick.
+//
+// The duplicate guard is untouched. Every entry still goes through the same
+// SELECT-then-INSERT-ON-CONFLICT, and two copies of one id inside a single batch
+// are serialised by the batch itself — the second finds the row the first just
+// wrote and is reported as a duplicate, exactly as before.
+const pending = [];
+let flushScheduled = false;
+
+function flushAppends() {
+  flushScheduled = false;
+  const batch = pending.splice(0, pending.length);
+  if (!batch.length) return;
   db.exec('BEGIN IMMEDIATE');
+  const out = [];
   try {
-    const existing = q.getMsg.get(entry.id);
-    if (existing) {
-      q.logDup.run(entry.id, room, entry.via || null, Date.now());
-      db.exec('COMMIT');
-      return { duplicate: true, rec: rowToEntry(existing) };
-    }
-    const seq = q.nextSeq.get(room).seq;
-    const extra = {};
-    for (const k of Object.keys(entry)) {
-      if (!['id', 'seq', 'room', 'from', 'ts', 'kind', 'text', 'env', 'via'].includes(k)) extra[k] = entry[k];
-    }
-    const res = q.insMsg.run(entry.id, room, seq, entry.from, entry.ts || Date.now(), entry.kind,
-      entry.kind === 'enc' ? null : (entry.text ?? null),
-      entry.kind === 'enc' ? JSON.stringify(entry.env) : null,
-      entry.via || null, Date.now(), Object.keys(extra).length ? JSON.stringify(extra) : null);
-    if (res.changes === 0) {                      // lost a race inside the same tx window
-      const row = q.getMsg.get(entry.id);
-      q.logDup.run(entry.id, room, entry.via || null, Date.now());
-      db.exec('COMMIT');
-      return { duplicate: true, rec: rowToEntry(row) };
+    for (const job of batch) {
+      try {
+        out.push({ job, res: appendOne(job.room, job.entry) });
+      } catch (e) {
+        out.push({ job, err: e });                // a bad row must not poison the batch
+      }
     }
     db.exec('COMMIT');
-    feedCache.delete(room);                       // /feed snapshot for this room is stale now
-    if (roomCount.has(room)) roomCount.set(room, roomCount.get(room) + 1);
-    return { duplicate: false, rec: rowToEntry(q.getMsg.get(entry.id)) };
   } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+    try { db.exec('ROLLBACK'); } catch (e2) {}
+    for (const job of batch) job.reject(e);
+    return;
   }
-};
+  stats.batches++;
+  stats.batch_max = Math.max(stats.batch_max, batch.length);
+  for (const o of out) {
+    if (o.err) o.job.reject(o.err);
+    else o.job.resolve(o.res);
+  }
+}
+
+function appendTx(room, entry) {
+  return new Promise((resolve, reject) => {
+    pending.push({ room, entry, resolve, reject });
+    if (!flushScheduled) {
+      flushScheduled = true;
+      setImmediate(flushAppends);
+    }
+  });
+}
 
 // ── One-time migration from the Lab 5 store (users, rooms, messages) ────────
 function migrateFromLab5(dir) {
@@ -275,7 +319,7 @@ const server = http.createServer(async (req, res) => {
       if (!room || !entry || !entry.from || !entry.kind) return json(res, 400, { error: 'room and entry{from,kind} required' });
       if (!entry.id) entry.id = crypto.randomUUID();
       if (!ID_RE.test(entry.id)) return json(res, 400, { error: 'bad message id' });
-      const out = appendTx(room, entry);
+      const out = await appendTx(room, entry);
       if (out.duplicate) {
         stats.duplicates_rejected++;
         return json(res, 200, { ok: true, duplicate: true, seq: out.rec.seq, id: out.rec.id });
@@ -366,6 +410,8 @@ const server = http.createServer(async (req, res) => {
         users: q.countUsers.get().n, rooms: q.countRooms.get().n, messages: q.countAll.get().n,
         duplicates_rejected_total: q.countDups.get().n, duplicates_rejected_since_boot: stats.duplicates_rejected,
         appended_since_boot: stats.appended, requests: stats.requests, subscribers: subscribers.size,
+        commit_batches: stats.batches, biggest_batch: stats.batch_max,
+        appends_per_commit: stats.batches ? Math.round(stats.appended / stats.batches * 100) / 100 : 0,
         uptime: Math.round((Date.now() - started) / 1000), node: process.version,
       });
     }

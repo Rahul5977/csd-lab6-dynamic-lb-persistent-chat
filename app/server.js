@@ -112,20 +112,42 @@ function loadSnapshot() {
 }
 
 // ── Database-service client ─────────────────────────────────────────────────
-// Idempotent verbs are retried once. POST /messages is ALSO retried once now:
-// the message id makes the append idempotent, so a retry can never duplicate.
-async function db(method, pathName, body) {
-  const attempt = async () => {
-    const res = await fetch(DB_URL + pathName, {
-      method, headers: body ? { 'Content-Type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
+// Every request this backend serves makes at least one call here, so the client
+// is a plain http.request over a keep-alive agent rather than global fetch():
+// under the evaluation's load the backends became the bottleneck, and undici's
+// per-call overhead was a large part of their CPU. Idempotent verbs are retried
+// once, and POST /messages is retried too because the message id makes the
+// append idempotent — a retry can never duplicate.
+const DB = new URL(DB_URL);
+const dbAgent = new http.Agent({
+  keepAlive: true, keepAliveMsecs: 30000, maxSockets: 128, maxFreeSockets: 64, scheduling: 'fifo',
+});
+function dbOnce(method, pathName, payload) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      agent: dbAgent, host: DB.hostname, port: DB.port, method, path: pathName,
+      headers: payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {},
+    }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        if (res.statusCode === 404) return resolve(null);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error(`db ${method} ${pathName} -> ${res.statusCode}`));
+        }
+        if (!chunks.length) return resolve(null);
+        try { resolve(JSON.parse(Buffer.concat(chunks))); } catch (e) { reject(e); }
+      });
     });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`db ${method} ${pathName} -> ${res.status}`);
-    return res.json();
-  };
-  try { return await attempt(); }
-  catch (e) { if (method === 'POST' && pathName !== '/messages') throw e; return attempt(); }
+    req.setTimeout(20000, () => req.destroy(new Error('db timeout')));
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+async function db(method, pathName, body) {
+  const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
+  try { return await dbOnce(method, pathName, payload); }
+  catch (e) { if (method === 'POST' && pathName !== '/messages') throw e; return dbOnce(method, pathName, payload); }
 }
 process.on('unhandledRejection', err => { metrics.errors_total++; log('unhandledRejection (survived):', err && err.message); });
 
@@ -575,7 +597,10 @@ async function ensurePublicRoom() {
   } catch (e) { log('public room setup failed (retrying):', e.message); setTimeout(ensurePublicRoom, 3000).unref?.(); }
 }
 
-server.listen(PORT, HOST, () => log(`backend ${VERSION} listening on ${HOST}:${PORT}, db=${DB_URL}${LB_URL ? ', lb=' + LB_URL : ''}`));
+// A large accept backlog: the evaluation opens hundreds of connections at once and
+// the balancer fans them across the backends, so a short queue means refused
+// connections — which the balancer reads as "this backend is down".
+server.listen(PORT, HOST, 4096, () => log(`backend ${VERSION} listening on ${HOST}:${PORT}, db=${DB_URL}${LB_URL ? ', lb=' + LB_URL : ''}`));
 connectFirehose();
 ensurePublicRoom();
 

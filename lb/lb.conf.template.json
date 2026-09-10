@@ -14,7 +14,7 @@
   "health_timeout_s": 6,
   "fail_threshold": 2,
   "rise_threshold": 2,
-  "degrade_ms": 2000,
+  "degrade_ms": 5000,
   "degrade_cpu_pct": 95,
   "ewma_alpha": 0.2,
   "explore_pct": 5,
@@ -23,7 +23,7 @@
   "rt_cap_ms": 250,
   "min_dwell_ms": 0,
   "load_weight": 1.0,
-  "connect_timeout_s": 3,
+  "connect_timeout_s": 5,
   "upstream_timeout_s": 30,
   "register_token": "__SET_BY_DEPLOY__",
   "discovery": {
@@ -41,5 +41,6 @@
     "require_version": "v3-assignment6"
   },
   "prune_after_s": 900,
-  "access_log": "logs/lb_access.csv"
+  "access_log": "logs/lb_access.csv",
+  "passive_fail_threshold": 4
 }
