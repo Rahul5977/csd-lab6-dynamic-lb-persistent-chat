@@ -1,9 +1,10 @@
-$ python3 scripts/dedup_test.py --url http://10.1.75.53:3269 --n 20 --restart-db
+$ python3 scripts/dedup_test.py --url http://10.1.75.53:3269 --n 20
 dedup test against http://10.1.75.53:3269, room dedup-test, N=20
-  T1  sent=20  stored=1   duplicate_responses=19  backends=['sys2', 'sys3', 'sys4']  PASS  same id sequentially
+  T1  sent=20  stored=1   duplicate_responses=19  backends=['sys3']  PASS  same id sequentially
   T2  sent=20  stored=1   duplicate_responses=19  backends=['sys2', 'sys3', 'sys4']  PASS  concurrent, 1 distinct seq
-  T3  sent=2   stored=1   duplicate_responses=1   backends=['sys3', 'sys4']  PASS  seq 27 == 27
+  T3  sent=2   stored=1   duplicate_responses=1   backends=['sys2', 'sys4']  PASS  seq 52 == 52
   T4  sent=5   stored=1   duplicate_responses=4   backends=['sys4']  PASS  Idempotency-Key header
-  T5  sent=20  stored=20  duplicate_responses=0   backends=['sys3']  PASS  control: distinct ids
-  P1  sent=49  stored=49  duplicate_responses=1   backends=[]  PASS:  PASS: count 48→49 across restart, probe readable=True, dup-of-old-id still rejected=True
-  db: 273769 messages, 10 duplicates rejected in total (sqlite (node:sqlite, WAL))
+  T5  sent=20  stored=20  duplicate_responses=0   backends=['sys4']  PASS  control: distinct ids
+  lookup /api/messages/872bcd2a… → HTTP 200, seq=53, via=sys2
+  db: 735207 messages, 27 duplicates rejected in total (sqlite (node:sqlite, WAL))
+wrote /Users/rahulraj/Desktop/  ₹ /CSD-Course/Lab-Task/6.Dynamic Load Balancing and Persistent Chat/scripts/../results/dedup_test.json

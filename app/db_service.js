@@ -51,6 +51,7 @@ try { ({ DatabaseSync } = require('node:sqlite')); } catch (e) {
 
 const PORT = parseInt(process.env.PORT || '5270', 10);
 const FEED_TAIL_TTL_MS = parseInt(process.env.FEED_TAIL_TTL_MS || '100', 10);
+const FEED_PAGE_MAX = parseInt(process.env.FEED_PAGE_MAX || '5000', 10);   // biggest single /feed body
 const tailCache = new Map();   // room#limit -> serialised body (short TTL)
 const HOST = process.env.HOST || '0.0.0.0';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -110,6 +111,7 @@ const q = {
   listMsgs: db.prepare('SELECT * FROM messages WHERE room = ? AND seq > ? ORDER BY seq DESC LIMIT ?'),
   feedMsgs: db.prepare('SELECT * FROM messages WHERE room = ? ORDER BY seq ASC'),
   feedTail: db.prepare('SELECT * FROM messages WHERE room = ? ORDER BY seq DESC LIMIT ?'),
+  feedPage: db.prepare('SELECT * FROM messages WHERE room = ? AND seq > ? ORDER BY seq ASC LIMIT ?'),
   countRoom: db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(seq), 0) AS last FROM messages WHERE room = ?'),
   countAll: db.prepare('SELECT COUNT(*) AS n FROM messages'),
   countUsers: db.prepare('SELECT COUNT(*) AS n FROM users'),
@@ -173,7 +175,7 @@ const appendTx = (room, entry) => {
     }
     db.exec('COMMIT');
     feedCache.delete(room);                       // /feed snapshot for this room is stale now
-    roomCount.set(room, countOf(room) + 1);
+    if (roomCount.has(room)) roomCount.set(room, roomCount.get(room) + 1);
     return { duplicate: false, rec: rowToEntry(q.getMsg.get(entry.id)) };
   } catch (e) {
     db.exec('ROLLBACK');
@@ -299,15 +301,27 @@ const server = http.createServer(async (req, res) => {
       const list = rows.map(rowToEntry);
       return json(res, 200, { messages: list, last: list.length ? list[list.length - 1].seq : since });
     }
-    // GET /feed?room=&limit=  — the whole room, ascending, as one pre-serialised
-    // body. Backends call this for the assignment's public /feed route; the
-    // snapshot is cached until the next append so a read-heavy load generator
-    // costs one SQLite scan per new message, not one per request.
+    // GET /feed?room=&limit=&since=  — the room's messages.
+    //   no `since`  -> the newest `limit` messages, ascending (the chat view)
+    //   `since=N`   -> the messages after sequence N, ascending (forward paging,
+    //                  which is how the COMPLETE history is retrieved)
+    // Backends call this for the public /feed route. The tail is cached and the
+    // whole-room snapshot is dropped on every append, so a read-heavy load
+    // generator costs one SQLite scan per new message, not one per request.
     if (u.pathname === '/feed' && req.method === 'GET') {
       const room = u.searchParams.get('room') || '';
       const limitRaw = u.searchParams.get('limit');
-      const limit = limitRaw && limitRaw !== 'all' ? Math.max(1, parseInt(limitRaw, 10) || 0) : 0;
       const total = countOf(room);
+      const sinceRaw = u.searchParams.get('since');
+      if (sinceRaw !== null) {
+        const since = Math.max(0, parseInt(sinceRaw, 10) || 0);
+        const pageSize = Math.min(FEED_PAGE_MAX, Math.max(1, parseInt(limitRaw || '1000', 10) || 1000));
+        const rows = q.feedPage.all(room, since, pageSize).map(rowToEntry);
+        const last = rows.length ? rows[rows.length - 1].seq : since;
+        return json(res, 200, { ok: true, room, total, count: rows.length, since,
+                                next_since: rows.length === pageSize ? last : null, messages: rows });
+      }
+      const limit = limitRaw && limitRaw !== 'all' ? Math.max(1, parseInt(limitRaw, 10) || 0) : 0;
       if (limit) {
         const key = room + '#' + limit;
         const hit = tailCache.get(key);
@@ -321,6 +335,16 @@ const server = http.createServer(async (req, res) => {
         if (tailCache.size > 32) tailCache.delete(tailCache.keys().next().value);
         res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': body.length });
         return res.end(body);
+      }
+      if (total > FEED_PAGE_MAX) {
+        // Serialising half a million messages into one body would take hundreds of
+        // megabytes; hand back the newest page and the cursor to walk the rest.
+        const rows = q.feedTail.all(room, FEED_PAGE_MAX).reverse().map(rowToEntry);
+        return json(res, 200, { ok: true, room, total, count: rows.length,
+                                truncated: true, page_max: FEED_PAGE_MAX,
+                                since: rows.length ? rows[0].seq - 1 : 0, next_since: null,
+                                hint: 'page the full history with ?since=<seq>&limit=<n>',
+                                messages: rows });
       }
       let hit = feedCache.get(room);
       if (!hit) {

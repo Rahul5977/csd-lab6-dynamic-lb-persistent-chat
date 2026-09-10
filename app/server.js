@@ -360,23 +360,34 @@ const server = http.createServer(async (req, res) => {
       // chat client actually renders. `count` always reports the true total and
       // `?limit=all` (or ?limit=N) returns the complete history, so nothing is lost.
       const limitParam = u.searchParams.get('limit');
+      const sinceParam = u.searchParams.get('since');
       const wantAll = limitParam === 'all' || limitParam === '0';
       const limit = wantAll ? 0 : Math.max(1, parseInt(limitParam || String(FEED_LIMIT), 10) || FEED_LIMIT);
-      const isDefault = !limitParam;
+      const isDefault = !limitParam && sinceParam === null;
       if (isDefault && feedFresh()) {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': feedCache.body.length,
                              'X-Backend-Id': BACKEND_ID, 'X-Feed-Cache': 'hit' });
         return res.end(feedCache.body);
       }
-      const out = await db('GET', `/feed?room=${PUBLIC_ROOM}&limit=${wantAll ? 'all' : limit}`) || { messages: [] };
+      // ?since=<seq> pages forward through the complete history; without it the
+      // answer is the newest `limit` messages.
+      const query = sinceParam !== null
+        ? `/feed?room=${PUBLIC_ROOM}&since=${Math.max(0, parseInt(sinceParam, 10) || 0)}&limit=${limit || 1000}`
+        : `/feed?room=${PUBLIC_ROOM}&limit=${wantAll ? 'all' : limit}`;
+      const out = await db('GET', query) || { messages: [] };
+      const returned = (out.messages || []).length;
+      const total = out.total ?? out.count ?? returned;
       const payload = {
         ok: true, room: PUBLIC_ROOM, backend: BACKEND_ID,
-        count: out.total ?? out.count ?? (out.messages || []).length,   // messages in the room
-        returned: (out.messages || []).length,
-        truncated: !wantAll && (out.total ?? 0) > (out.messages || []).length,
+        count: total,                                   // messages in the room
+        returned,
+        truncated: returned < total,
         limit: wantAll ? 'all' : limit,
         messages: out.messages || [],
       };
+      if (sinceParam !== null) payload.since = out.since ?? 0;
+      if (out.next_since != null) payload.next_since = out.next_since;
+      if (out.hint) payload.hint = out.hint;
       const body = Buffer.from(JSON.stringify(payload));
       if (isDefault) feedCache = { body, at: Date.now(), room: PUBLIC_ROOM, dirty: false };
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': body.length,

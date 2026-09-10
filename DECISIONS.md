@@ -131,7 +131,10 @@ without bound. Measured: at 1 412 messages the full feed was already 383 KB and 
 the cost is linear, so a leaderboard run would end up measuring the size of the history.
 Decision: the default answer is the newest 200 messages — what a chat client actually
 renders — and every answer reports the true total in `count`, whether it was truncated,
-and the window used. `?limit=N` and `?limit=all` return more, up to the complete history.
+and the window used. `?limit=N` returns the newest N and `?since=<seq>&limit=N` pages
+forward through the history with a `next_since` cursor, so the COMPLETE history is
+retrievable in order; one body is capped at 5 000 messages because by the end of the
+experiments the room held 461 411 of them and an unbounded response simply failed.
 Nothing is hidden and no message is unreachable. Each backend caches the default body and
 rebuilds it at most every 100 ms, so a read-heavy generator cannot make the database
 re-serialise the same window thousands of times a second; the database applies the same

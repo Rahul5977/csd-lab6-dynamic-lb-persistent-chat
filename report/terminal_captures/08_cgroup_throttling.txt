@@ -1,0 +1,18 @@
+# Why the database was moved off sys1: cgroup CPU accounting during a load run.
+$ ssh lbsys1 'cat /sys/fs/cgroup/cpu.stat'   (sampled 8 s apart while 60 clients ran)
+
+system    CPU used   periods  throttled   throttled
+          (% of 1)   elapsed    periods    time (s)
+sys1         47.9%        79          6        0.27
+sys2         39.8%        79          2        0.10
+sys3         44.0%        80          7        0.54
+sys4         33.5%        79          2        0.11
+
+the probe itself achieved 118 req/s at 1044 ms p95
+NOTE: no system went above 60 % of its CPU, so this particular sample was NOT
+      cluster-bound — the client link was the limit while it was taken, and it
+      says nothing about throttling. The diagnosis in the report was made from a
+      sample in which sys1 ran at 82 % and was throttled in 41 of 80 periods.
+
+# A throttled period means every task in the container is stopped until the next
+# 100 ms period begins — which is where the unexplained queueing time was going.

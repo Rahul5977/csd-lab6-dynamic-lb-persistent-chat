@@ -1,17 +1,17 @@
 $ bash scripts/sanity_check.sh
-== Assignment 6 sanity check Fri Sep  4 13:54:18 IST 2026 ==
+== Assignment 6 sanity check Thu Sep 10 15:16:03 IST 2026 ==
 ✅ LB v2 (public)     http://10.1.75.53:3269/lb/health  {"status":"ok","service":"lb","version":"v2-dynamic","active_backends":3}
-✅ app via LB         http://10.1.75.53:3269/health  {"status":"ok","backend":"sys2","version":"v3-assignment6","uptime":634,"connections":1,"db_firehose":true,"lo
-   algorithm=adaptive active_backends=3 total_requests=81757
-   - sys2  172.17.0.71:3000  UP        src=config   ewma=37.2 score=74.9 cpu=0.8 reqs=28220
-   - sys3  172.17.0.72:3000  UP        src=scan     ewma=6.1 score=6.1 cpu=0.4 reqs=24219
-   - sys4  172.17.0.73:3001  UP        src=scan     ewma=6.1 score=6.2 cpu=0.8 reqs=28582
-✅ DB service sys1:5270  sqlite  messages=273769 users=720 rooms=7 dups_rejected=10 subscribers=3
-✅ backend sys2 :3000  v3-assignment6 cpu 0.5 %
-✅ backend sys3 :3000  v3-assignment6 cpu 0.4 %
-✅ backend sys4 :3001  v3-assignment6 cpu 0.4 %
+✅ app via LB         http://10.1.75.53:3269/health  {"status":"ok","backend":"sys4","version":"v3-assignment6","uptime":93,"connections":0,"db_firehose":true,"loa
+   algorithm=threshold active_backends=3 total_requests=735600
+   - sys2  172.17.0.71:3000  UP        src=config   ewma=114.4 score=114.4 cpu=1.1 reqs=355977
+   - sys3  172.17.0.72:3000  UP        src=scan     ewma=21.0 score=21.0 cpu=0.4 reqs=193972
+   - sys4  172.17.0.73:3001  UP        src=register ewma=34.3 score=34.3 cpu=0.4 reqs=83310
+✅ DB service sys3:5270  sqlite  messages=735183 users=721 rooms=8 dups_rejected=16 subscribers=3
+✅ backend sys2 :3000  v3-assignment6 cpu 0.1 %
+✅ backend sys3 :3000  v3-assignment6 cpu 0.3 %
+✅ backend sys4 :3001  v3-assignment6 cpu 0.6 %
 -- previous assignments --
-✅ Lab5 direct sys2   http://10.1.75.53:3270/health  {"status":"ok","backend":"sys2","version":"v3-assignment6","uptime":634,"connections":1,"db_firehose":true,"lo
-✅ Lab5 direct sys3   http://10.1.75.53:3271/health  {"status":"ok","backend":"sys3","version":"v3-assignment6","uptime":584,"connections":0,"db_firehose":true,"lo
+✅ Lab5 direct sys2   http://10.1.75.53:3270/health  {"status":"ok","backend":"sys2","version":"v3-assignment6","uptime":99,"connections":0,"db_firehose":true,"loa
+✅ Lab5 direct sys3   http://10.1.75.53:3271/health  {"status":"ok","backend":"sys3","version":"v3-assignment6","uptime":97,"connections":0,"db_firehose":true,"loa
 ✅ Project Contour    http://10.1.75.53:3272 (sys4:3000, untouched)
 ✅ Lab5 state service sys1:5269 (still running, untouched)

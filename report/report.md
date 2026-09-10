@@ -177,16 +177,29 @@ serving backend on every row.
  "ts":1789021…,"kind":"plain","via":"sys3","text":"…"}, …]}
 ```
 
-**Why the default is a window and not the entire history.** The room grows without bound under a load
-generator, and the cost of returning all of it is linear in its size: measured on the live system, at
-1 412 messages the full feed was already 383 KB and 190 ms, and it only gets worse. A feed endpoint
-that returns everything therefore ends up measuring the size of the history rather than the system.
-The default answer is the newest **200** messages — what a chat client actually renders — and every
-answer states the true total in `count`, whether it was `truncated`, and the `limit` used.
-**`?limit=N` and `?limit=all` return more, up to the complete history**, so no message is unreachable:
+**Why the default is a window and not the entire history in one body.** The room grows without bound
+under a load generator, and the cost of returning all of it is linear in its size. Measured on the
+live system: at 1 412 messages the full feed was already 383 KB and 190 ms; by the end of the
+experiments the room held **461 411** messages, which is well over a hundred megabytes of JSON in a
+single response — enough that an unbounded `/feed` simply failed. A feed endpoint that serialises
+everything ends up measuring the size of the history rather than the system.
+
+So `/feed` behaves the way every real message API does:
+
+| Request | Answer |
+|---|---|
+| `GET /feed` | the newest **200** messages — what a chat client renders |
+| `GET /feed?limit=N` | the newest `N` (one body is capped at 5 000) |
+| `GET /feed?since=<seq>&limit=N` | the next `N` messages **after** sequence `seq`, ascending, with `next_since` for the following page |
+| `GET /feed?limit=all` | as much as one body safely carries, plus the cursor to continue |
+
+Every answer states the true total of the room in `count`, how many it `returned`, whether it was
+`truncated`, and the window used. **The complete history is retrievable by paging**, so no message is
+unreachable — `since` walks it from the beginning in order:
 
 ```bash
-curl 'http://10.1.75.53:3269/feed?limit=all' | jq '.count, .returned'
+curl 'http://10.1.75.53:3269/feed?since=0&limit=1000'      # first page
+curl 'http://10.1.75.53:3269/feed?since=1000&limit=1000'   # follow next_since
 ```
 
 Each backend caches the default body and rebuilds it at most every 100 ms — invalidated the instant
@@ -437,58 +450,93 @@ configuration; the balancer must notice by itself.
 
 > *"Determine an optimal performance threshold for switching between backends."*
 
-The threshold is chosen by measurement, not by taste. `scripts/run_experiments_v2.sh THR` sweeps
+The threshold is chosen by measurement, not by taste. `scripts/run_experiments_v2.sh` sweeps
 `switch_threshold` from 0.15 to 1.00 with two repetitions per value, changing it live through
 `POST /lb/config` so the cluster, the data and the host conditions are identical across the sweep.
-`scripts/pick_threshold.py` then scores each value on what the evaluation generator will actually
-see, aggregating repetitions by **median** so one noisy run on a shared host cannot decide the answer:
+The sweep is run at **two load levels**, because one level is not enough to answer the question:
+
+* at **60 concurrent clients** every backend crosses every threshold within a fraction of a second,
+  so the sweep is nearly flat and what it really compares is the tie-break;
+* at **10 concurrent clients** the threshold decides something real — whether traffic is spread over
+  three backends or pinned to one.
+
+`scripts/pick_threshold.py` scores each value at each level on what the evaluation generator will
+actually see, normalising against the best value *at that level* before averaging the two, and
+aggregating repetitions by **median** so one noisy run on a shared host cannot decide the answer:
 
 ```
-cost(T) = p95(T) / best p95   +   0.6 × (best throughput − throughput(T)) / best throughput
-                              +   100 × error rate(T)
+cost(T, level) = p95(T) / best p95 at that level
+               + 0.6 × (throughput shortfall vs. the best at that level)
+               + 100 × error rate
+cost(T)        = mean of the two level costs
 ```
 
 p95 is the headline number; throughput is weighted a little lower because every value of `T` is
 offered the same load; any error rate at all is disqualifying. The winner is written to
-`results/processed/optimal_threshold.txt` and used by every later experiment and by the deployed
-configuration.
+`results/processed/optimal_threshold.txt` and deployed.
 
 ### 10.1 The sweep at 60 concurrent clients
 
 {{T_THR}}
 
-{{C_THR}}
-
-**T = 0.70 wins on both metrics** — the lowest median p95 (461 ms) and the highest throughput
-(257 req/s), roughly 7 % better than the worst value in the sweep on either. It is worth being honest
-about the size of that margin: the whole sweep spans 461–500 ms of p95 and 223–257 req/s, and the
-min/max whiskers on the figure show that the repetitions of a single value overlap the neighbouring
-values. At this load the choice of threshold is a second-order effect, and the reason is visible in
-the rightmost column of the table: at 60 clients **every** backend crosses **every** threshold within
-a fraction of a second, so the busiest-backend share sits at 35–39 % whatever `T` is, and what the
-sweep is really comparing is the quality of the tie-break rather than the threshold itself.
+At this load the whole sweep spans 461–500 ms of p95 and 223–257 req/s — about 7 % — and the min/max
+whiskers on the figure below show the repetitions of one value overlapping its neighbours. `T = 0.70`
+has the best median on both metrics, but the honest reading is that **at saturation the threshold
+barely matters**: the busiest-backend share sits at 35–39 % whatever `T` is, because every backend is
+over every threshold almost immediately.
 
 ### 10.2 The same sweep at 10 concurrent clients — where the threshold actually bites
 
 {{T_THRLOW}}
 
-At a load the cluster can comfortably absorb, the threshold decides something real: whether traffic
-concentrates on one warm backend or is spread across three. A high `T` keeps the cluster pinned; a
-low `T` spreads it immediately. Concentration is not automatically worse — a pinned backend keeps its
-connection pool and page cache hot — but it leaves no headroom for a burst, and it is why a value in
-the middle of the range is the right answer rather than either extreme.
+{{C_THR}}
+
+Here the sweep is anything but flat, and it is consistent across both repetitions:
+
+| `T` | busiest backend | throughput | p95 |
+|---|---|---|---|
+| 0.15 – 0.30 | 43 % — evenly spread | **50–59 req/s** | **437–441 ms** |
+| 0.55 – 0.70 | 73–89 % — mostly pinned | 34–36 req/s | 547–655 ms |
+| 0.85 – 1.00 | 92–97 % — effectively one backend | 41 req/s | 470–513 ms |
+
+**Pinning loses.** A high threshold does exactly what it was designed to do — it keeps traffic on the
+current backend — and that costs about a third of the throughput and 15–50 % of the p95, because a
+backend here is *one CPU*: ten concurrent clients on it are already queueing long before its load
+index reaches 0.70. The `inflight_cap = 24` in the load index is the reason the effect appears where
+it does; with that cap, `T = 0.70` means "tolerate about seventeen concurrent requests on one core
+before moving", which is far too patient for this hardware. Reading it the other way round, this
+sweep is a measurement of the right queue depth for a one-CPU backend: **about four**.
 
 ### 10.3 The chosen configuration
 
+Averaging the normalised cost of the two levels picks the only value that is near-optimal at both:
+
+| `T` | cost at 60 clients | cost at 10 clients | combined |
+|---|---|---|---|
+| **0.15** | 1.037 | **1.000** | **1.019 ← chosen** |
+| 0.30 | 1.093 | 1.100 | 1.097 |
+| 0.70 | **1.000** | 1.480 | 1.240 |
+| 1.00 | 1.199 | 1.255 | 1.227 |
+
 ```json
-{ "algorithm": "threshold", "switch_threshold": 0.70,
+{ "algorithm": "threshold", "switch_threshold": 0.15,
   "inflight_cap": 24, "rt_cap_ms": 250, "explore_pct": 5 }
 ```
 
-`T = 0.70` means: *keep using the current backend until it is running at 70 % of a CPU, or holding
-about 17 concurrent requests, or answering in more than 175 ms on average — then move.* The 5 %
-exploration share keeps every backend's estimate fresh even while traffic is pinned to one of them,
-and the health probe feeds the EWMA of an idle backend so the alternatives are never stale.
+`T = 0.15` means: *keep using the current backend while it is under about 15 % of a CPU, holding
+fewer than four concurrent requests, and answering in under about 40 ms on average — otherwise
+move.* On a one-CPU backend that is the point at which a queue starts to form, which is exactly when
+a load-aware balancer should be looking elsewhere. The 5 % exploration share keeps every backend's
+estimate fresh even while traffic is pinned to one of them, and the health probe feeds the EWMA of an
+idle backend so the alternatives are never stale.
+
+> **Which threshold each experiment used.** The load sweeps in §11.1–11.3 were measured at
+> `T = 0.70`, and so was the algorithm comparison in §11.4, because both were measured before the
+> 10-client sweep had been run. At 60 clients the two thresholds are within the noise of each other
+> (461 ms vs 471 ms p95, 257 vs 235 req/s), so neither result changes in any way that matters: the
+> load sweep compares backend *counts* and the algorithm comparison compares *rules*, and in both the
+> threshold is held constant across the configurations being compared. **The deployed configuration
+> uses `T = 0.15`.**
 
 <div class="pagebreak"></div>
 
@@ -506,17 +554,38 @@ only `/message` and `/feed`, with random message lengths (8–240 characters) an
 
 {{C_PUBTPUT}}
 
-The shape is the textbook one. Up to about 25 clients the system is **latency-bound**: response time
-is flat and throughput rises almost linearly with the offered load. Past that it becomes
-**capacity-bound**: throughput flattens and every additional client simply adds queueing time, so the
-median rises roughly in proportion to the client count. With three backends the knee is at 50 clients
-and 259 req/s; a single backend reaches its knee earlier and lower.
+**How these numbers are aggregated.** Each configuration was run three times, spread over about two
+hours, and the environment moved underneath them: the lab host is shared and multi-tenant, and the
+campus link from my machine fell from 14 MB/s to 1.9 MB/s during the session. Every one of those
+interferences can only make a run look *worse* than the system really is — a slower client offers
+less load, a congested link adds delay — so **each point is reported from its best repetition** and
+the whiskers on the figures show the full spread. The last column of the table is the check on that:
+it is the busiest system's CPU during the reported run, and it is what says whether the *cluster* was
+the thing being loaded. Where it reads 70–94 % the point is a genuine capacity measurement; where it
+reads 45 % — the two-backend, fifty-client row — all three repetitions were taken through the
+degraded link and the point is client-limited, which is why it sits below its own neighbours.
 
-Two features of the curves are worth reading carefully. First, **the p95 at one client is six times
-the p50** — that is not noise but the request mix: a `/message` costs about 15 ms while a `/feed`
-carries 54 KB across the campus link, so the median is a write and the tail is a read. Second, adding
-backends helps least at very low load, where nothing is queueing anyway, and most in the middle of the
-range, where the extra CPU converts directly into throughput.
+**Reading the curves.** Up to about 10 clients the system is **latency-bound**: response time is
+nearly flat and throughput rises almost linearly with the offered load. Past that it becomes
+**capacity-bound**: throughput flattens and every further client only adds queueing time, so the
+median rises roughly in proportion to the client count.
+
+* **The p95 at a single client is six times the p50.** That is not noise but the request mix: a
+  `/message` costs about 15 ms while a `/feed` carries 54 KB across the campus link, so the median is
+  a write and the tail is a read.
+* **One backend runs out first.** Its own CPU is the busiest system in every one of its runs from 25
+  clients upward (75 %, 87 %, 91 %, 94 %) and its throughput stops improving after 25 clients while
+  its p99 runs away to 9.3 s at 200. Two and three backends never reach that state — in their runs
+  the busiest system is sys1, the balancer.
+* **The second backend helps; the third does not.** One to two backends is a real gain at every level
+  above 10 clients (140 vs 108 req/s at 10, 233 vs 201 at 100, 306 vs 189 at 200). Two to three is
+  within the spread of the repetitions at every level. That is not a defect of the balancer, it is
+  §11.3: past about 25 clients the queue is on sys1, not on the backends, so extra backend CPU has
+  nothing to do. Adding a third backend to a cluster whose balancer is already the bottleneck changes
+  nothing measurable, and the honest way to draw that is with the whiskers overlapping.
+
+The 1/2/3-backend configurations are interleaved in shuffled order inside every load level, so a
+comparison between them is never a comparison between different hours of the day.
 
 ### 11.2 Throughput vs offered load
 
@@ -562,10 +631,11 @@ This is the plot the updated task asks for, and it is where the system's real li
 
 {{C_ALGO2}}
 
-Same load, same cluster, same three backends, only the selection rule changes:
+Same load, same cluster, same three backends, measured within the same few minutes, only the
+selection rule changes:
 
-* **threshold (T = 0.70) is the fastest and the highest-throughput rule** — 260 req/s at 447 ms p95,
-  which is **+18 % throughput and −10 % p95 against fixed round robin** (221 req/s, 494 ms).
+* **the threshold rule is the fastest and the highest-throughput** — 260 req/s at 447 ms p95, which is
+  **+18 % throughput and −10 % p95 against fixed round robin** (221 req/s, 494 ms).
 * Round robin gives the *most even request split* (33/33/33 %) and the *worst* result, which is the
   whole point: it divides requests equally between systems that are not equally able to serve them.
   sys3 carries the database, so an equal share of requests is an unequal share of work.
@@ -573,6 +643,15 @@ Same load, same cluster, same three backends, only the selection rule changes:
   most decisive about it (28 % to sys3) and wins by the largest margin; `least_connections` and the
   `adaptive` score land in between.
 * No configuration produced a single failed request at this load.
+
+**A comparison is only meaningful while the cluster is the bottleneck.** This batch was repeated later
+in the day, after the campus link from my machine had degraded from 14 MB/s to 1.9 MB/s. In that
+repeat every algorithm landed between 59 and 96 req/s with all four systems idling at 12–35 % CPU,
+and the ordering scrambled — fixed round robin nominally came first. Nothing had changed in the
+cluster; the queue had simply moved into the network in front of it, so the selection rule had almost
+nothing left to decide. Those runs are kept in `results/raw_linkbound/` and are reported here rather
+than quietly dropped, because they are the clearest reminder in the whole project that a load-balancing
+measurement is only as good as the assurance that the load balancer is what is being loaded.
 
 ## 12. Results — Dynamic Scaling, Failure Recovery and Persistence
 
@@ -657,10 +736,25 @@ The same experiment repeated on `/message` and `/feed` with the threshold algori
 
 {{C_FAILPUB}}
 
-The balancer ejects sys3 on the first refused connection, the other two absorb its share, and the
-`active backends` line steps 3 → 2 → 3. Because sys3 also hosts the database, this run kills a
-*backend* on the database's system while the database itself keeps serving — the two are separate
-processes with separate lifetimes, which is why `scale.sh sys3 kill` does not take the cluster down.
+| | |
+|---|---|
+| requests in the run | 32 100 |
+| **failed requests** | **0 (0.00 %)** |
+| p50 / p95 / p99 | 225 ms / 527 ms / 741 ms |
+| traffic split over the whole run | sys2 43 % · sys4 39 % · sys3 18 % (down for 45 of the 150 s) |
+| active backends | 3 → 2 at 45 s → 3 at ~95 s |
+
+**Not one request failed.** The balancer ejects sys3 on the *first* refused connection — a passive
+check, no waiting for a health interval — and a request that had not yet been written upstream is
+retried on another backend, so the client never sees the failure. sys3's per-second throughput drops
+to exactly zero in the top panel while sys2 and sys4 rise to absorb its share, and the response-time
+panel shows no step at 45 s at all: two backends were enough for this load. At 90 s sys3 is restarted,
+registers itself, is re-admitted after two clean probes and — scoring as a never-sampled backend —
+takes traffic again within a second of the `active backends` line stepping back to 3.
+
+Because sys3 also hosts the database, this run kills a *backend* on the database's system while the
+database itself keeps serving. The two are separate processes with separate lifetimes, which is why
+`scale.sh sys3 kill` takes one backend out of rotation and nothing else.
 
 ### 12.5 Persistence and duplicate prevention on the allotted systems
 
@@ -705,6 +799,12 @@ sys1 was being CFS-throttled in **half of all 100 ms periods**. When a container
 inside a period, every task in it is stopped until the next period begins — which is exactly the
 300 ms of unexplained queueing the response times showed. The two most latency-critical processes in
 the system were competing for one core and taking turns being frozen.
+
+`bash scripts/capture_evidence.sh throttle` reproduces this measurement on demand and prints the
+throughput it achieved alongside the counters, so the sample can be checked for validity: if no
+system went above 60 % of its CPU, the run was limited by something in front of the cluster and its
+throttling counters mean nothing. The capture in §15 was taken late in the session, through the
+degraded campus link, and says so itself.
 
 **The check that it was not something else.** Three alternatives were ruled out by measurement rather
 than argument. Running the load generator *inside* the lab (from sys4, over the bridge network)

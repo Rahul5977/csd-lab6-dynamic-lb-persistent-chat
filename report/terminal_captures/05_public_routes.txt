@@ -1,0 +1,31 @@
+# The two routes the assignment fixes, through the load balancer URL only.
+
+$ curl -X POST http://10.1.75.53:3269/message -H 'Content-Type: application/json' -d '{"client-name":"rahul","msg":"hello from the report"}'
+{"ok":true,"duplicate":false,"id":"873f9687-8ebc-4d87-8e01-b87445ca1001","seq":461412,"client-name":"rahul","client_id":false,"room":"public","backend":"sys4"}
+$ curl -X POST http://10.1.75.53:3269/message -d 'client-name=grader&msg=form+encoded+body'   # form encoding also accepted
+{"ok":true,"duplicate":false,"id":"fef194f0-6a45-4b16-977c-d80ab4bbef3b","seq":461413,"client-name":"grader","client_id":false,"room":"public","backend":"sys4"}
+$ curl 'http://10.1.75.53:3269/message?client-name=queryman&msg=from+the+query+string'        # and query parameters
+{"ok":true,"duplicate":false,"id":"1de14fde-9c34-492b-b723-879e1996bbc6","seq":461414,"client-name":"queryman","client_id":false,"room":"public","backend":"sys4"}
+# The same message id sent four times — stored once, the rest are duplicates.
+$ for i in 1 2 3 4; do curl -X POST http://10.1.75.53:3269/message -d '{"client-name":"dup","msg":"retry","id":"report-demo-id-0001"}'; done
+{"ok":true,"duplicate":true,"id":"report-demo-id-0001","seq":461411,"client-name":"dup","dedup":"database","backend":"sys4"}
+{"ok":true,"duplicate":true,"id":"report-demo-id-0001","seq":461411,"client-name":"dup","dedup":"backend-lru","backend":"sys4"}
+{"ok":true,"duplicate":true,"id":"report-demo-id-0001","seq":461411,"client-name":"dup","dedup":"backend-lru","backend":"sys4"}
+{"ok":true,"duplicate":true,"id":"report-demo-id-0001","seq":461411,"client-name":"dup","dedup":"backend-lru","backend":"sys4"}
+
+$ curl http://10.1.75.53:3269/feed | head          # default window, with the true total
+{'ok': True, 'room': 'public', 'backend': 'sys4', 'count': 461414, 'returned': 200, 'truncated': True, 'limit': 200}
+  seq=461409  id=c85a3611-228d-453d-8   from=grader       via=sys3  form encoded body
+  seq=461410  id=6009bfaf-48a8-4ca8-9   from=queryman     via=sys3  from the query string
+  seq=461411  id=report-demo-id-0001    from=dup          via=sys3  retry
+  seq=461412  id=873f9687-8ebc-4d87-8   from=rahul        via=sys4  hello from the report
+  seq=461413  id=fef194f0-6a45-4b16-9   from=grader       via=sys4  form encoded body
+  seq=461414  id=1de14fde-9c34-492b-b   from=queryman     via=sys4  from the query string
+
+$ curl 'http://10.1.75.53:3269/feed?since=0&limit=1000'   # page forward through the complete history
+{'ok': True, 'room': 'public', 'backend': 'sys4', 'count': 461414, 'returned': 1000, 'truncated': True, 'limit': 1000, 'since': 0, 'next_since': 1000}
+  first page: seq 1 .. 1000, follow next_since for the next one
+
+$ curl 'http://10.1.75.53:3269/feed?limit=all'          # as much as one body safely carries
+{'ok': True, 'room': 'public', 'backend': 'sys2', 'count': 461414, 'returned': 5000, 'truncated': True, 'limit': 'all', 'hint': 'page the full history with ?since=<seq>&limit=<n>'}
+  returned 5000 messages, 5000 distinct ids -> duplicates in the feed: 0

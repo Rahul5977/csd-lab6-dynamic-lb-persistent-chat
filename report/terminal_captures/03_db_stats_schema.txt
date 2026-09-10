@@ -1,24 +1,22 @@
-$ ssh lbsys1 'curl -s http://127.0.0.1:5270/stats'
+$ ssh lbsys3 'curl -s localhost:5270/stats'
 {
     "service": "db",
     "engine": "sqlite (node:sqlite, WAL)",
     "file": "/home/student/assignment6/data/chat.sqlite",
-    "db_bytes": 74354688,
-    "users": 720,
-    "rooms": 7,
-    "messages": 273769,
-    "duplicates_rejected_total": 10,
-    "duplicates_rejected_since_boot": 0,
-    "appended_since_boot": 0,
-    "requests": 7,
+    "db_bytes": 213962752,
+    "users": 721,
+    "rooms": 8,
+    "messages": 735183,
+    "duplicates_rejected_total": 16,
+    "duplicates_rejected_since_boot": 1,
+    "appended_since_boot": 3,
+    "requests": 31,
     "subscribers": 3,
-    "uptime": 49,
+    "uptime": 130,
     "node": "v22.23.2"
 }
 
-$ ssh lbsys1 'python3 -c "import sqlite3; ...schema, counts, duplicate-id check..."'
-CREATE TABLE dedup_log (                -- audit trail of rejected duplicates
-      n INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL, room TEXT, via TEXT, at INTEGER NOT NULL);
+$ ssh lbsys3 'sqlite3-style schema + duplicate check on the live database file'
 CREATE TABLE messages (
       id        TEXT PRIMARY KEY,            -- globally unique message id (UUID v4): THE duplicate guard
       room      TEXT NOT NULL,
@@ -33,13 +31,9 @@ CREATE TABLE messages (
       extra     TEXT,                        -- optional JSON (e.g. roomMeta on system messages)
       UNIQUE(room, seq)
   );
-CREATE TABLE rooms    (id TEXT PRIMARY KEY, locked INTEGER NOT NULL DEFAULT 0, epoch INTEGER NOT NULL DEFAULT 0,
-                                       verifier TEXT, created INTEGER NOT NULL, created_by TEXT);
-CREATE TABLE sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL);
-CREATE TABLE users    (username TEXT PRIMARY KEY, hash TEXT NOT NULL, created INTEGER NOT NULL);
-CREATE INDEX idx_messages_room_seq ON messages(room, seq);
-CREATE INDEX idx_sessions_expires ON sessions(expires);
 
-rows: {'messages': 273769, 'users': 720, 'rooms': 7, 'dedup_log': 10}
-duplicate ids in messages (must be 0): 0
-recent dedup_log: [('c904a223-fa2c-4120-9cfd-333ca229e693', 'dedup-test', 'sys4'), ('c904a223-fa2c-4120-9cfd-333ca229e693', 'dedup-test', 'sys2'), ('c904a223-fa2c-4120-9cfd-333ca229e693', 'dedup-test', 'sys4')]
+CREATE TABLE dedup_log (                -- audit trail of rejected duplicates
+      n INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL, room TEXT, via TEXT, at INTEGER NOT NULL);
+
+rows with a duplicated message id: 0
+messages total: 735183 | in the public room: 461414 | duplicate rejections logged: 16

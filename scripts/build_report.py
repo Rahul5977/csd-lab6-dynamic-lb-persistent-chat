@@ -51,7 +51,14 @@ def chart(name, caption=""):
 
 
 SHOTS = [
-    ("01_dashboard_3_backends.png", "Live LB dashboard — three backends UP, adaptive scores, event log"),
+    ("11_dashboard_threshold.png",
+     "Live balancer dashboard — algorithm <b>threshold</b>, switch threshold <b>0.15</b>, the load index of "
+     "each backend, which backend traffic is pinned to, the switch counter, and an event log showing the "
+     "threshold firing, a backend degrading, being ejected and being re-admitted"),
+    ("12_feed_response.png",
+     "<b>GET /feed</b> through the load balancer URL — the true room total, how many were returned, the "
+     "truncation flag, and every message with its unique id, sequence number, sender and serving backend"),
+    ("01_dashboard_3_backends.png", "Dashboard during the earlier adaptive-algorithm runs — three backends UP, scores, event log"),
     ("02_dashboard_scaling.png", "Dashboard during the scaling run — sys3 and sys4 admitted while load was running"),
     ("03_chat_login.png", "Chat login screen served through the load balancer"),
     ("04_chat_conversation.png", "Conversation: message ids, seq numbers, serving backend, cluster panel"),

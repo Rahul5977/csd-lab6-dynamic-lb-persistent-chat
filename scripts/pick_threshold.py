@@ -32,20 +32,13 @@ RAW = os.path.join(ROOT, "results", "raw")
 OUT = os.path.join(ROOT, "results", "processed")
 
 
-def main():
+def collect(prefix):
     runs = {}
-    for path in sorted(glob.glob(os.path.join(RAW, "THR_t*_rep*.json"))):
-        m = re.search(r"THR_t([0-9.]+)_rep(\d+)\.json$", os.path.basename(path))
+    for path in sorted(glob.glob(os.path.join(RAW, prefix + "_t*_rep*.json"))):
+        m = re.search(re.escape(prefix) + r"_t([0-9.]+)_rep(\d+)\.json$", os.path.basename(path))
         if not m:
             continue
-        T = float(m.group(1))
-        s = json.load(open(path))["summary"]
-        runs.setdefault(T, []).append(s)
-
-    if not runs:
-        print("pick_threshold: no THR_* runs found — keeping the current threshold", file=sys.stderr)
-        return 1
-
+        runs.setdefault(float(m.group(1)), []).append(json.load(open(path))["summary"])
     rows = []
     for T, ss in sorted(runs.items()):
         rows.append({
@@ -58,14 +51,40 @@ def main():
             "err_pct": statistics.median(s["error_rate_pct"] for s in ss),
             "spread": statistics.median(spread_pct(s) for s in ss),
         })
+    if rows:
+        best_tp = max(r["throughput"] for r in rows) or 1.0
+        best_p95 = min(r["p95"] for r in rows) or 1.0
+        for r in rows:
+            r["cost"] = round(r["p95"] / best_p95
+                              + 0.6 * (best_tp - r["throughput"]) / best_tp
+                              + 100.0 * r["err_pct"] / 100.0, 4)
+    return rows
 
-    best_tp = max(r["throughput"] for r in rows) or 1.0
-    best_p95 = min(r["p95"] for r in rows) or 1.0
-    for r in rows:
-        r["cost"] = round(r["p95"] / best_p95
-                          + 0.6 * (best_tp - r["throughput"]) / best_tp
-                          + 100.0 * r["err_pct"] / 100.0, 4)
+
+def main():
+    levels = [("60 clients", collect("THR")), ("10 clients", collect("THRLOW"))]
+    levels = [(name, rows) for name, rows in levels if rows]
+    if not levels:
+        print("pick_threshold: no THR_* runs found — keeping the current threshold", file=sys.stderr)
+        return 1
+
+    rows = levels[0][1]
+    if len(levels) > 1:
+        for name, other in levels[1:]:
+            for r in rows:
+                match = next((o for o in other if o["threshold"] == r["threshold"]), None)
+                if match:
+                    r["cost"] = round((r["cost"] + match["cost"]) / 2, 4)
+                    r.setdefault("levels", []).append(name)
     winner = min(rows, key=lambda r: r["cost"])
+
+    for name, lrows in levels:
+        print(f"-- {name} --")
+        print(f"{'T':>6} {'p50':>7} {'p95':>8} {'rps':>8} {'busiest%':>9} {'cost':>7}")
+        for r in lrows:
+            print(f"{r['threshold']:>6} {r['p50']:>7.0f} {r['p95']:>8.0f} {r['throughput']:>8.1f} "
+                  f"{r['spread']:>9.1f} {r['cost']:>7.3f}")
+        print()
 
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, "threshold_sweep.csv"), "w") as fh:
@@ -76,6 +95,7 @@ def main():
     with open(os.path.join(OUT, "optimal_threshold.txt"), "w") as fh:
         fh.write(str(winner["threshold"]))
 
+    print("-- combined (mean of the per-level costs) --")
     print(f"{'T':>6} {'p50':>7} {'p95':>8} {'p99':>8} {'rps':>8} {'err%':>7} {'busiest%':>9} {'cost':>7}")
     for r in rows:
         mark = "  <-- chosen" if r is winner else ""

@@ -1,23 +1,41 @@
-$ bash scripts/ssh_all.sh 'hostname; hostname -I; ss -tlnp 2>/dev/null | grep -E ":(3000|3001|5270) "'
+$ bash scripts/ssh_all.sh 'hostname; hostname -I; ss -tlnp | grep -E ":(3000|3001|5270) "'
 ===== lbsys1 =====
 [lbsys1] stu78_sys1
 [lbsys1] 172.17.0.70 
-[lbsys1] LISTEN 0      511          0.0.0.0:5270      0.0.0.0:*    users:(("node",pid=255461,fd=21))   
-[lbsys1] LISTEN 0      512          0.0.0.0:3000      0.0.0.0:*    users:(("python3",pid=255529,fd=5)) 
+[lbsys1] LISTEN 0      512          0.0.0.0:3000      0.0.0.0:*    users:(("python3",pid=619404,fd=6)) 
 [lbsys1] exit: 0
 ===== lbsys2 =====
 [lbsys2] stu78_sys2
 [lbsys2] 172.17.0.71 
-[lbsys2] LISTEN 0      511          0.0.0.0:3000      0.0.0.0:*    users:(("node",pid=241117,fd=18))
+[lbsys2] LISTEN 0      511          0.0.0.0:3000      0.0.0.0:*    users:(("node",pid=241524,fd=18))
 [lbsys2] exit: 0
 ===== lbsys3 =====
 [lbsys3] stu78_sys3
 [lbsys3] 172.17.0.72 
-[lbsys3] LISTEN 0      511          0.0.0.0:3000      0.0.0.0:*    users:(("node",pid=240499,fd=18))
+[lbsys3] LISTEN 0      511          0.0.0.0:3000      0.0.0.0:*    users:(("node",pid=242322,fd=18))
+[lbsys3] LISTEN 0      511          0.0.0.0:5270      0.0.0.0:*    users:(("node",pid=242292,fd=21))
 [lbsys3] exit: 0
 ===== lbsys4 =====
 [lbsys4] stu78_sys4
 [lbsys4] 172.17.0.73 
-[lbsys4] LISTEN 0      511          0.0.0.0:3001       0.0.0.0:*    users:(("node",pid=259908,fd=18))                          
+[lbsys4] LISTEN 0      511          0.0.0.0:3001       0.0.0.0:*    users:(("node",pid=287936,fd=18))                          
 [lbsys4] LISTEN 0      511          0.0.0.0:3000       0.0.0.0:*    users:(("nginx",pid=233485,fd=5),("nginx",pid=231101,fd=5))
+[lbsys4] exit: 0
+
+$ bash scripts/ssh_all.sh 'cat /sys/fs/cgroup/cpu.max; free -m | head -2'   # one CPU each
+===== lbsys1 =====
+[lbsys1] cpu.max: 100000 100000
+[lbsys1] memory.max: 536870912
+[lbsys1] exit: 0
+===== lbsys2 =====
+[lbsys2] cpu.max: 100000 100000
+[lbsys2] memory.max: 536870912
+[lbsys2] exit: 0
+===== lbsys3 =====
+[lbsys3] cpu.max: 100000 100000
+[lbsys3] memory.max: 536870912
+[lbsys3] exit: 0
+===== lbsys4 =====
+[lbsys4] cpu.max: 100000 100000
+[lbsys4] memory.max: 536870912
 [lbsys4] exit: 0

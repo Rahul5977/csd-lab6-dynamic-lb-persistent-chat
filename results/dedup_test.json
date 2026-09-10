@@ -1,7 +1,7 @@
 {
   "url": "http://10.1.75.53:3269",
   "n": 20,
-  "at": 1788510214.345966,
+  "at": 1789033578.6733088,
   "results": [
     {
       "test": "T1",
@@ -9,9 +9,7 @@
       "stored": 1,
       "duplicate_responses": 19,
       "backends": [
-        "sys2",
-        "sys3",
-        "sys4"
+        "sys3"
       ],
       "verdict": "PASS",
       "note": "same id sequentially"
@@ -35,11 +33,11 @@
       "stored": 1,
       "duplicate_responses": 1,
       "backends": [
-        "sys3",
+        "sys2",
         "sys4"
       ],
       "verdict": "PASS",
-      "note": "seq 27 == 27"
+      "note": "seq 52 == 52"
     },
     {
       "test": "T4",
@@ -58,36 +56,27 @@
       "stored": 20,
       "duplicate_responses": 0,
       "backends": [
-        "sys3"
+        "sys4"
       ],
       "verdict": "PASS",
       "note": "control: distinct ids"
-    },
-    {
-      "test": "P1",
-      "sent": 49,
-      "stored": 49,
-      "duplicate_responses": 1,
-      "backends": [],
-      "verdict": "PASS:",
-      "note": "PASS: count 48\u219249 across restart, probe readable=True, dup-of-old-id still rejected=True"
     }
   ],
   "db_stats": {
-    "backend": "sys4",
+    "backend": "sys2",
     "service": "db",
     "engine": "sqlite (node:sqlite, WAL)",
     "file": "/home/student/assignment6/data/chat.sqlite",
-    "db_bytes": 74354688,
-    "users": 720,
-    "rooms": 7,
-    "messages": 273769,
-    "duplicates_rejected_total": 10,
-    "duplicates_rejected_since_boot": 0,
-    "appended_since_boot": 0,
-    "requests": 5,
+    "db_bytes": 213962752,
+    "users": 722,
+    "rooms": 8,
+    "messages": 735207,
+    "duplicates_rejected_total": 27,
+    "duplicates_rejected_since_boot": 12,
+    "appended_since_boot": 27,
+    "requests": 122,
     "subscribers": 3,
-    "uptime": 5,
+    "uptime": 149,
     "node": "v22.23.2"
   }
 }

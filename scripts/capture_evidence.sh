@@ -54,8 +54,16 @@ for m in d['messages'][-6:]:
     print(f\"  seq={m['seq']:<7} id={m['id'][:20]:<22} from={m['from']:<12} via={m['via']:<5} {m.get('text','')[:38]}\")
 "
     echo
-    echo "\$ curl '$LB/feed?limit=all' | ...   # the complete history is one parameter away"
-    curl -sS -m 60 "$LB/feed?limit=all" | python3 -c "
+    echo "\$ curl '$LB/feed?since=0&limit=1000'   # page forward through the complete history"
+    curl -sS -m 60 "$LB/feed?since=0&limit=1000" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print({k: v for k, v in d.items() if k != 'messages'})
+print(f\"  first page: seq {d['messages'][0]['seq']} .. {d['messages'][-1]['seq']}, follow next_since for the next one\")
+"
+    echo
+    echo "\$ curl '$LB/feed?limit=all'          # as much as one body safely carries"
+    curl -sS -m 90 "$LB/feed?limit=all" | python3 -c "
 import json,sys
 d = json.load(sys.stdin)
 print({k: v for k, v in d.items() if k != 'messages'})
@@ -147,6 +155,7 @@ gen = subprocess.Popen(["python3", "loadgen/loadgen.py", "--url", "http://10.1.7
                         "--concurrency", "60", "--duration", "20", "--warmup", "3",
                         "--run-id", "throttle_probe", "--out-dir", "/tmp"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+import json as _json
 time.sleep(5)
 res = {}
 def sample(name, host):
@@ -167,6 +176,19 @@ for name, _ in HOSTS:
     print(f"{name:<8}{(b['usage_usec']-a['usage_usec'])/8e6*100:>9.1f}%"
           f"{b['nr_periods']-a['nr_periods']:>10}{b['nr_throttled']-a['nr_throttled']:>11}"
           f"{(b['throttled_usec']-a['throttled_usec'])/1e6:>12.2f}")
+try:
+    s = _json.load(open("/tmp/throttle_probe.json"))["summary"]
+    busiest = max((res[n][1]['usage_usec'] - res[n][0]['usage_usec']) / 8e6 * 100 for n, _ in HOSTS)
+    print(f"\nthe probe itself achieved {s['throughput_rps']:.0f} req/s at {s['latency_ms']['p95']:.0f} ms p95")
+    if busiest < 60:
+        print("NOTE: no system went above 60 % of its CPU, so this particular sample was NOT")
+        print("      cluster-bound — the client link was the limit while it was taken, and it")
+        print("      says nothing about throttling. The diagnosis in the report was made from a")
+        print("      sample in which sys1 ran at 82 % and was throttled in 41 of 80 periods.")
+    else:
+        print("the busiest system reached %.0f %% of its CPU, so the cluster was the bottleneck here" % busiest)
+except Exception as e:
+    pass
 EOF
     echo
     echo "# A throttled period means every task in the container is stopped until the next"

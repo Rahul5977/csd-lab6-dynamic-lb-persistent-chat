@@ -18,7 +18,7 @@
   "degrade_cpu_pct": 95,
   "ewma_alpha": 0.2,
   "explore_pct": 5,
-  "switch_threshold": 0.55,
+  "switch_threshold": 0.15,
   "inflight_cap": 24,
   "rt_cap_ms": 250,
   "min_dwell_ms": 0,

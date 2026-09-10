@@ -1,0 +1,69 @@
+$ node app/tests/smoke.js        # backend + database + dedup + the public routes
+— cross-instance delivery (WS on b1, POST on b2) —
+  ✓ message POSTed to b2 arrived over WS on b1
+  ✓ delivery tagged with serving backend
+— health / load reporting / registration —
+  ✓ /health ok + db firehose up
+  ✓ /health reports load (cpu_pct, loadavg1, in_flight, loop_lag_ms)
+  ✓ /metrics has dedup counters
+  ✓ both backends registered with the LB (heartbeats seen)
+  ✓ registration carries token, host, port, weight
+— persistence across a DB service restart —
+  ✓ message count identical after DB restart (7 = 7)
+  ✓ history readable after restart
+  ✓ users persisted (login works after restart)
+  ✓ duplicate of a PRE-restart id is still rejected (dedup is durable, not in-memory)
+  ✓ backends reconnected to the restarted DB firehose
+— required public routes: /message and /feed —
+  ✓ POST /message {client-name, msg} accepted
+  ✓ POST /message accepts a form-encoded body
+  ✓ GET /message with query parameters accepted
+  ✓ POST /message without msg is rejected
+  ✓ a repeated id is stored once even across two backends
+  ✓ duplicates name the layer that caught them
+  ✓ GET /feed returns the whole public room (4 messages)
+  ✓ /feed is served by the backend that was asked
+  ✓ the deduplicated message appears exactly once in /feed
+  ✓ /feed shows a message written through the OTHER backend
+  ✓ /feed rows carry id, sender and sequence
+  ✓ a message written on one backend is visible in /feed on the other
+— graceful deregister on SIGTERM —
+  ✓ backend POSTed /lb/deregister before exiting
+
+ALL TESTS PASSED
+
+$ python3 lb/test_lb.py          # the balancer against real backends
+  ✓ slow b2 gets a small share (13%) while UP: {'b3': 82, 'b1': 49, 'b2': 19}
+  ✓ round_robin ignores latency: b2 share 33% (~33%)
+— 5. failure and recovery —
+  ✓ no client errors while b3 dies (passive ejection + retry): {'b1': 44, 'b2': 16}
+  ✓ b3 marked DOWN
+  ✓ active_backends == 2 during outage
+  ✓ b3 re-admitted after restart (active check)
+  ✓ events: ejected + readmitted logged
+— 6. drain, remove, algorithms —
+  ✓ b2 DRAINING or DOWN after SIGTERM deregister
+  ✓ no traffic to the drained backend: {'b3': 35, 'b1': 5}
+  ✓ DELETE /lb/backends/b2 removes it
+  ✓ algorithm round_robin: 30/30 served {'b3': 15, 'b1': 15}
+  ✓ algorithm least_connections: 30/30 served {'b3': 15, 'b1': 15}
+  ✓ algorithm weighted_round_robin: 30/30 served {'b1': 15, 'b3': 15}
+  ✓ algorithm ip_hash: 30/30 served {'b1': 30}
+  ✓ algorithm least_response_time: 30/30 served {'b1': 30}
+  ✓ algorithm adaptive: 30/30 served {'b1': 24, 'b3': 6}
+— 7. config-file edit is picked up without restart —
+  ✓ algorithm from edited file applied
+— 8. threshold algorithm: stick below T, switch above T —
+  ✓ T=0.95 (nothing is loaded): traffic stays on ONE backend {'b1': 40}
+  ✓ stats report the threshold and the pinned backend
+  ✓ T~0 (everything is over threshold): traffic spreads {'b1': 27, 'b3': 18, 'b2': 15}
+  ✓ switch counter moved
+— 9. required public routes: /message and /feed —
+  ✓ POST /message accepts client-name + msg
+  ✓ POST /message accepts a form-encoded body
+  ✓ repeated message id stored once, rest reported duplicate
+  ✓ GET /feed returns the whole room (3 messages)
+  ✓ the deduplicated message appears exactly once in /feed
+  ✓ /feed carries what /message wrote
+
+ALL TESTS PASSED
