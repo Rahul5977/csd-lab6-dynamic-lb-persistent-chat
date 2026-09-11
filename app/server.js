@@ -287,7 +287,7 @@ const FEED_BYTES = parseInt(process.env.FEED_BYTES || '1048576', 10);
 // copy is rebuilt at most once every FEED_GZIP_MS, so the cost is bounded however
 // often it is asked for.
 const FEED_GZIP_MS = parseInt(process.env.FEED_GZIP_MS || '2000', 10);
-const FEED_QUIET_MS = parseInt(process.env.FEED_QUIET_MS || '400', 10);  // "no writes lately"
+const FEED_QUIET_MS = parseInt(process.env.FEED_QUIET_MS || '200', 10);  // "no writes lately"
 const FEED_GZIP_LEVEL = parseInt(process.env.FEED_GZIP_LEVEL || '6', 10);
 // Below this size compressing is cheap enough to redo whenever the feed changes,
 // so a small feed is never stale. The rate cap only applies once the feed is big

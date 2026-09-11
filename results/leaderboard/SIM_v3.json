@@ -1,0 +1,63 @@
+{
+ "run_id": "SIM_v3",
+ "board": "static",
+ "url": "http://10.1.75.53:3269",
+ "stages": [
+  {
+   "concurrency": 250,
+   "budget": 5000,
+   "requests": 5250,
+   "successes": 5250,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 301.71,
+   "rps": 771.54
+  },
+  {
+   "concurrency": 500,
+   "budget": 5000,
+   "requests": 5500,
+   "successes": 5500,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 545.53,
+   "rps": 824.76
+  },
+  {
+   "concurrency": 750,
+   "budget": 5000,
+   "requests": 5750,
+   "successes": 5750,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 870.06,
+   "rps": 702.11
+  },
+  {
+   "concurrency": 1000,
+   "budget": 5000,
+   "requests": 6000,
+   "successes": 5879,
+   "errors": 121,
+   "timeouts": 0,
+   "err_rate": 0.02017,
+   "mean_ms": 2297.97,
+   "rps": 333.14
+  }
+ ],
+ "mean_response_ms": 1032.08,
+ "total_requests": 22500,
+ "total_successes": 22379,
+ "total_errors": 121,
+ "err_rate_overall": 0.00538,
+ "peak_rps": 824.76,
+ "break_concurrency": null,
+ "accepted_msgs": 19879,
+ "delivered": 19879,
+ "lost": 0,
+ "completeness": 1.0,
+ "integrity_note": "/feed returned 19879 of 19879 messages in the room"
+}

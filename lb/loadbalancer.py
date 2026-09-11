@@ -683,7 +683,12 @@ HOP_BY_HOP = {b"connection", b"keep-alive", b"proxy-authenticate", b"proxy-autho
 IO_BUF = 16384           # stream-reader limit: paid for on EVERY connection
 RELAY_CHUNK = 32768      # body copy granularity
 WRITE_HWM = 32768        # per-connection write buffer before backpressure applies
-POOL_MAX = 64            # idle keep-alive connections kept per backend
+# Idle keep-alive connections kept per backend. Too small is not a memory saving,
+# it is connection churn: at a thousand concurrent clients the balancer needs
+# hundreds of upstream connections per backend, and closing the surplus after every
+# request leaves sockets in TIME_WAIT until the source ports run out and connects
+# start failing — which the balancer then reads as a dead backend and ejects it.
+POOL_MAX = 512
 
 
 def tune_writer(w, limit_writes=True):
@@ -893,8 +898,15 @@ async def handle_client(creader, cwriter):
                     and b"gzip" in hmap.get(b"accept-encoding", b"").lower()
                     and FEED_CACHE.fresh(cfg.get("feed_cache_ms", 300) * 3)):
                 body_out = FEED_CACHE.body
-                cwriter.write(body_out)
-                await cwriter.drain()
+                # In chunks, draining between them. A single write() of a
+                # megabyte-and-a-half queues the whole body in the transport, and a
+                # thousand readers doing that at once is more memory than this
+                # container has — which is exactly how the balancer was killed
+                # mid-evaluation. Backpressure has to apply here as it does on the
+                # proxied path.
+                for off in range(0, len(body_out), RELAY_CHUNK):
+                    cwriter.write(body_out[off:off + RELAY_CHUNK])
+                    await cwriter.drain()
                 FEED_CACHE.hits += 1
                 LB_STATE.log(client_ip, "GET", fp, "cache", 0.0, 200, len(body_out))
                 continue

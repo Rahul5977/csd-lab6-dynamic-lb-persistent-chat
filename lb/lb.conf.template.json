@@ -44,6 +44,6 @@
   "access_log": "logs/lb_access.csv",
   "passive_fail_threshold": 4,
   "feed_cache_path": "/feed",
-  "feed_cache_ms": 300,
+  "feed_cache_ms": 200,
   "feed_cache_max_bytes": 8388608
 }
