@@ -397,7 +397,10 @@ async function feedLoad(catchUp) {
     for (const m of (out && out.messages) || []) feedAppend(m);
     feedTotal = Math.max((out && out.total) || 0, feedCount);
     feedReady = true;
-    if (!catchUp) log(`feed ready: ${feedCount} messages, ${(feedLen / 1024).toFixed(0)} KB`);
+    if (!catchUp) {
+      log(`feed ready: ${feedCount} messages, ${(feedLen / 1024).toFixed(0)} KB`);
+      feedGzip();          // warm the compressed copy so the first reader gets it
+    }
     else if (feedCount > before) log(`feed caught up: +${feedCount - before} messages`);
   } catch (e) {
     log('feed load failed, retrying:', e.message);
