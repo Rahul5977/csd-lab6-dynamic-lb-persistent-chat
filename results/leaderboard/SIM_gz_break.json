@@ -1,0 +1,74 @@
+{
+ "run_id": "SIM_gz_break",
+ "board": "breakpoint",
+ "url": "http://10.1.75.53:3269",
+ "stages": [
+  {
+   "concurrency": 200,
+   "budget": 5000,
+   "requests": 5200,
+   "successes": 5200,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 288.88,
+   "rps": 634.78
+  },
+  {
+   "concurrency": 350,
+   "budget": 5000,
+   "requests": 5350,
+   "successes": 5350,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 504.44,
+   "rps": 610.26
+  },
+  {
+   "concurrency": 500,
+   "budget": 5000,
+   "requests": 5500,
+   "successes": 5500,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 1031.0,
+   "rps": 406.61
+  },
+  {
+   "concurrency": 750,
+   "budget": 5000,
+   "requests": 5750,
+   "successes": 5012,
+   "errors": 738,
+   "timeouts": 2,
+   "err_rate": 0.12835,
+   "mean_ms": 761.77,
+   "rps": 304.67
+  },
+  {
+   "concurrency": 1000,
+   "budget": 5000,
+   "requests": 6000,
+   "successes": 0,
+   "errors": 6000,
+   "timeouts": 0,
+   "err_rate": 1.0,
+   "mean_ms": 0.0,
+   "rps": 0.0
+  }
+ ],
+ "mean_response_ms": 649.96,
+ "total_requests": 27800,
+ "total_successes": 21062,
+ "total_errors": 6738,
+ "err_rate_overall": 0.24237,
+ "peak_rps": 634.78,
+ "break_concurrency": 1000,
+ "accepted_msgs": 20000,
+ "delivered": 0,
+ "lost": 20000,
+ "completeness": 0.0,
+ "integrity_note": "feed read failed: [Errno 61] Connect call failed ('10.1.75.53', 3269)"
+}

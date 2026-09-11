@@ -1,0 +1,63 @@
+{
+ "run_id": "SIM_gz_mac",
+ "board": "static",
+ "url": "http://10.1.75.53:3269",
+ "stages": [
+  {
+   "concurrency": 250,
+   "budget": 5000,
+   "requests": 5250,
+   "successes": 5250,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 449.05,
+   "rps": 502.48
+  },
+  {
+   "concurrency": 500,
+   "budget": 5000,
+   "requests": 5500,
+   "successes": 5500,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 520.71,
+   "rps": 791.12
+  },
+  {
+   "concurrency": 750,
+   "budget": 5000,
+   "requests": 5750,
+   "successes": 5750,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 884.52,
+   "rps": 635.87
+  },
+  {
+   "concurrency": 1000,
+   "budget": 5000,
+   "requests": 6000,
+   "successes": 5999,
+   "errors": 1,
+   "timeouts": 0,
+   "err_rate": 0.00017,
+   "mean_ms": 1643.74,
+   "rps": 469.92
+  }
+ ],
+ "mean_response_ms": 896.41,
+ "total_requests": 22500,
+ "total_successes": 22499,
+ "total_errors": 1,
+ "err_rate_overall": 4e-05,
+ "peak_rps": 791.12,
+ "break_concurrency": null,
+ "accepted_msgs": 19999,
+ "delivered": 19999,
+ "lost": 0,
+ "completeness": 1.0,
+ "integrity_note": "/feed returned 20000 of 20000 messages in the room"
+}

@@ -42,6 +42,7 @@ STATIC_STAGES = [250, 500, 750, 1000]
 BREAK_STAGES = [200, 350, 500, 750, 1000, 1500]
 BREAK_PCT = 0.20
 MSG = "leaderboard load test message"          # "the same message content for every submission"
+ACCEPT_GZIP = False                            # --gzip: advertise gzip, as most HTTP clients do
 
 
 class Stat:
@@ -93,15 +94,21 @@ class Conn:
                 pass
         self.r = self.w = None
 
-    async def request(self, method, path, body=None):
-        """Returns (status, body_bytes). Raises on transport failure."""
+    async def request(self, method, path, body=None, keep=True):
+        """Returns (status, body_bytes). With keep=False the body is read and
+        dropped in blocks instead of being assembled, which matters: the feed is
+        megabytes and hundreds of virtual users hold one each, which is enough to
+        exhaust a 512 MB box and kill the generator rather than the server."""
         if self.w is None:
             await self.connect()
         head = f"{method} {path} HTTP/1.1\r\nHost: {self.host}:{self.port}\r\n"
         if body is not None:
             head += ("Content-Type: application/json\r\n"
                      f"Content-Length: {len(body)}\r\n")
-        head += "Connection: keep-alive\r\n\r\n"
+        head += "Connection: keep-alive\r\n"
+        if ACCEPT_GZIP:
+            head += "Accept-Encoding: gzip\r\n"
+        head += "\r\n"
         self.w.write(head.encode() + (body or b""))
         await self.w.drain()
 
@@ -127,11 +134,20 @@ class Conn:
                 if size == 0:
                     await self.r.readuntil(b"\r\n")
                     break
-                chunks.append(await self.r.readexactly(size))
+                block = await self.r.readexactly(size)
+                if keep:
+                    chunks.append(block)
                 await self.r.readuntil(b"\r\n")
             data = b"".join(chunks)
         elif clen is not None:
-            data = await self.r.readexactly(clen)
+            if keep:
+                data = await self.r.readexactly(clen)
+            else:
+                left, data = clen, b""
+                while left:
+                    n = min(65536, left)
+                    await self.r.readexactly(n)
+                    left -= n
         else:
             data = await self.r.read(-1)
             await self.close()
@@ -180,7 +196,7 @@ async def run_stage(cfg, concurrency, budget, stat):
             # every user reads the feed once at the end of its stage
             t0 = time.perf_counter()
             try:
-                st, _ = await asyncio.wait_for(c.request("GET", cfg.feed_path), cfg.timeout)
+                st, _ = await asyncio.wait_for(c.request("GET", cfg.feed_path, keep=False), cfg.timeout)
                 ms = (time.perf_counter() - t0) * 1000
                 stat.requests += 1
                 if 200 <= st < 300:
@@ -208,6 +224,9 @@ async def completeness(cfg, accepted):
         st, data = await c.request("GET", cfg.feed_path)
         if st != 200:
             return 0, None
+        if data[:2] == b"\x1f\x8b":
+            import gzip as _gz
+            data = _gz.decompress(data)
         d = json.loads(data)
         for m in d.get("messages", []):
             if m.get("id"):
@@ -294,10 +313,14 @@ def main():
     ap.add_argument("--rest", type=float, default=2.0, help="seconds between stages")
     ap.add_argument("--message-path", default="/message")
     ap.add_argument("--feed-path", default="/feed")
+    ap.add_argument("--gzip", action="store_true",
+                    help="send Accept-Encoding: gzip, which most real HTTP clients do by default")
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--out-dir", default=os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "results", "raw"))
     cfg = ap.parse_args()
+    global ACCEPT_GZIP
+    ACCEPT_GZIP = cfg.gzip
     cfg.run_id = cfg.run_id or f"SIM_{cfg.board}_{int(time.time())}"
     try:
         asyncio.run(main_async(cfg))

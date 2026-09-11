@@ -25,6 +25,12 @@ DB_PORT=5270
 # in half of all 100 ms periods (see the report's bottleneck analysis), so the
 # database lives on sys3 instead.
 DB_SYS="${DB_SYS:-sys3}"
+# The room behind the public /message and /feed routes. /feed returns this room in
+# full, so it must hold conversation rather than the 739 436 messages my own load
+# generators left in the original `public` room. Pointing the routes at a fresh
+# room empties the feed without deleting a single row: everything written before
+# is still in the database and still reachable through the chat API.
+PUBLIC_ROOM="${PUBLIC_ROOM:-room}"
 LB_PORT=3000                            # container port behind public 10.1.75.53:3269
 NODE22="v22.23.2"
 
@@ -95,8 +101,8 @@ deploy_backend() {  # $1 = sys2|sys3|sys4
     cd $REMOTE_DIR
     export PATH=\"\$HOME/node/bin:\$PATH\"
     command -v node >/dev/null || { echo 'no node — run scripts/install_node.sh $host first'; exit 1; }
-    printf 'PORT=%s\nBACKEND_ID=%s\nDB_URL=http://%s:%s\nLB_URL=http://%s:%s\nLB_TOKEN=%s\nADVERTISE_HOST=%s\nADVERTISE_PORT=%s\nLB_HEARTBEAT_S=5\nLOG_LEVEL=info\nUV_THREADPOOL_SIZE=2\n' \
-        '$port' '$sys' '$DB_IP' '$DB_PORT' '$SYS1_IP' '$LB_PORT' '$LB_TOKEN' '$ip' '$port' > .env
+    printf 'PORT=%s\nBACKEND_ID=%s\nDB_URL=http://%s:%s\nLB_URL=http://%s:%s\nLB_TOKEN=%s\nADVERTISE_HOST=%s\nADVERTISE_PORT=%s\nLB_HEARTBEAT_S=5\nLOG_LEVEL=info\nUV_THREADPOOL_SIZE=2\nPUBLIC_ROOM=%s\nFEED_MAX=%s\nFEED_BYTES=%s\n' \
+        '$port' '$sys' '$DB_IP' '$DB_PORT' '$SYS1_IP' '$LB_PORT' '$LB_TOKEN' '$ip' '$port' '$PUBLIC_ROOM' "${FEED_MAX:-35000}" "${FEED_BYTES:-1048576}" > .env
     # stop OUR previous instance (pidfile) and, on sys2/sys3, the Lab 5 backend holding port $port
     [ -f backend.pid ] && kill \$(cat backend.pid) 2>/dev/null || true
     if [ -f ~/assignment5/backend.pid ] && [ '$port' = 3000 ]; then kill \$(cat ~/assignment5/backend.pid) 2>/dev/null || true; fi

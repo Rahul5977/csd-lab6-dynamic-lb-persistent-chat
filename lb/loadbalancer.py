@@ -575,23 +575,36 @@ HOP_BY_HOP = {b"connection", b"keep-alive", b"proxy-authenticate", b"proxy-autho
               b"te", b"trailers", b"transfer-encoding", b"upgrade"}
 
 
-IO_BUF = 262144          # buffered-reader size and socket buffer target
-POOL_MAX = 256           # idle keep-alive connections kept per backend
+# Buffer sizes are a memory budget, not just a speed knob. sys1 has 512 MB, and
+# with a thousand client connections and a thousand upstream ones every buffer is
+# paid for two thousand times over: at 256 KB each, a run of multi-megabyte /feed
+# responses drove the container past its limit and the kernel killed the balancer
+# (memory.events reported oom_kill, peak 542 MB). 64 KB is still far larger than a
+# TCP segment, and it bounds the worst case at a few tens of megabytes.
+IO_BUF = 16384           # stream-reader limit: paid for on EVERY connection
+RELAY_CHUNK = 32768      # body copy granularity
+WRITE_HWM = 32768        # per-connection write buffer before backpressure applies
+POOL_MAX = 64            # idle keep-alive connections kept per backend
 
 
-def tune_writer(w):
+def tune_writer(w, limit_writes=True):
     """Big TCP buffers + no Nagle. Bodies here are tens of kilobytes and the hop to
     the backends crosses a container bridge, so a small receive buffer turns one
     logical read into a dozen recv() syscalls — which is what actually costs the
     balancer its CPU on a one-core system."""
     try:
+        if limit_writes:
+            # Without this a slow client lets the balancer queue an unbounded body
+            # in memory. With a thousand connections each pulling a compressed feed
+            # that is how the container reached its 512 MB limit and was killed.
+            w.transport.set_write_buffer_limits(high=WRITE_HWM, low=WRITE_HWM // 2)
         sock = w.get_extra_info("socket")
         if sock is None:
             return
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, IO_BUF)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, IO_BUF)
-    except OSError:
+    except (OSError, AttributeError):
         pass
 
 
@@ -713,7 +726,7 @@ async def relay_body(src, dst, clen):
     sent = 0
     if clen is None:
         while True:
-            chunk = await src.read(IO_BUF)
+            chunk = await src.read(RELAY_CHUNK)
             if not chunk:
                 break
             dst.write(chunk); sent += len(chunk)
@@ -721,7 +734,7 @@ async def relay_body(src, dst, clen):
         return sent
     remaining = clen
     while remaining > 0:
-        chunk = await src.read(min(IO_BUF, remaining))
+        chunk = await src.read(min(RELAY_CHUNK, remaining))
         if not chunk:
             raise ConnectionError("upstream truncated the body")
         dst.write(chunk); sent += len(chunk); remaining -= len(chunk)
