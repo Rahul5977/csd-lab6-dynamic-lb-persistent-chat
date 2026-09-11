@@ -277,7 +277,7 @@ def main():
     ok("repeated message id stored once, rest reported duplicate",
        sum(1 for x in seen if not x.get("duplicate")) == 1 and all(x.get("seq") == seen[0]["seq"] for x in seen))
     feed = json.loads(urllib.request.urlopen(base + "/feed").read())
-    texts = [m.get("text") for m in feed.get("messages", [])]
+    texts = [m.get("msg", m.get("text")) for m in feed.get("messages", [])]
     ok(f"GET /feed returns the whole room ({feed.get('count')} messages)", feed.get("ok") and feed.get("count", 0) >= 3)
     ok("the deduplicated message appears exactly once in /feed",
        sum(1 for m in feed["messages"] if m.get("id") == dup_id) == 1)

@@ -263,8 +263,9 @@ const fakeLB = http.createServer((req, res) => {
   ok(`GET /feed returns the whole public room (${feed.count} messages)`, feed.ok && feed.count >= 4);
   ok('/feed is served by the backend that was asked', feed.backend === 'test-b2');
   ok('the deduplicated message appears exactly once in /feed', feed.messages.filter(m => m.id === pubId).length === 1);
+  const bodyOf = (m) => m.msg ?? m.text;
   ok('/feed shows a message written through the OTHER backend',
-     feed.messages.some(m => m.seq === pubSeq && m.text === 'hello public api'));
+     feed.messages.some(m => m.seq === pubSeq && bodyOf(m) === 'hello public api'));
   ok('/feed rows carry id, sender and sequence', feed.messages.every(m => m.id && m.from && Number.isInteger(m.seq)));
   const fresh = await post1(base1, { 'client-name': 'reader', msg: 'read after write' });
   await new Promise(res => setTimeout(res, 400));

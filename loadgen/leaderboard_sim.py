@@ -39,9 +39,21 @@ import time
 from urllib.parse import urlparse
 
 STATIC_STAGES = [250, 500, 750, 1000]
-BREAK_STAGES = [200, 350, 500, 750, 1000, 1500]
+BREAK_STAGES = [200, 350, 500, 750, 1000, 1500, 2000]   # the real ladder goes to 2000
 BREAK_PCT = 0.20
-MSG = "leaderboard load test message"          # "the same message content for every submission"
+# The evaluation's messages are ~400 characters of RANDOM printable text: a tagged
+# prefix, a timestamp, then noise. That matters more than it sounds. A fixed string
+# compresses ninefold and made every feed measurement here optimistic by an order of
+# magnitude; random text does not compress at all. Reproduced from the real traffic.
+import random as _random
+import string as _string
+_ALPHA = _string.ascii_letters + _string.digits + " !#$%&()*+,-./:;<=>?@[]^_{|}~"
+_RUN_TAG = "%08x" % _random.getrandbits(32)
+
+
+def make_msg(n):
+    body = "".join(_random.choice(_ALPHA) for _ in range(_random.randint(300, 450)))
+    return f"#{_RUN_TAG}-{n}# timestamp={1700000000000 + n} {body}"
 ACCEPT_GZIP = False                            # --gzip: advertise gzip, as most HTTP clients do
 
 
@@ -173,7 +185,7 @@ async def run_stage(cfg, concurrency, budget, stat):
                         break
                     remaining[0] -= 1
                 mid = f"lbsim-{cfg.run_id}-{concurrency}-{idx}-{remaining[0]}"
-                body = json.dumps({"client-name": name, "msg": MSG, "id": mid}).encode()
+                body = json.dumps({"client-name": name, "msg": make_msg(stat.requests), "id": mid}).encode()
                 t0 = time.perf_counter()
                 try:
                     st, _ = await asyncio.wait_for(

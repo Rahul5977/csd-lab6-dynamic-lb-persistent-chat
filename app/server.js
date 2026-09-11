@@ -320,13 +320,14 @@ function feedGrow(need) {
   feedBuf = next;
 }
 
-// One feed row. `msg` and `client-name` repeat `text` and `from` under the names
-// the /message route takes its input by, so a reader that knows only those finds
-// what it is looking for.
+// One feed row. The body is named `msg`, the same key `/message` takes its input
+// by. It used to be repeated as `text` as well, for a reader that might know only
+// that name — but the evaluation's messages are ~400 characters of random text, so
+// carrying them twice was half of every feed response and it is the largest thing
+// this system serves. One copy, under the name the route itself uses.
 function feedRow(e) {
   return JSON.stringify({
-    id: e.id, seq: e.seq, from: e.from, ts: e.ts,
-    text: e.text ?? null, msg: e.text ?? null, via: e.via,
+    id: e.id, seq: e.seq, from: e.from, ts: e.ts, msg: e.text ?? null, via: e.via,
   });
 }
 

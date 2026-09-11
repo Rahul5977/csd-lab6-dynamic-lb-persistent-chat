@@ -11,8 +11,8 @@
    "errors": 0,
    "timeouts": 0,
    "err_rate": 0.0,
-   "mean_ms": 362.73,
-   "rps": 647.24
+   "mean_ms": 587.44,
+   "rps": 413.7
   },
   {
    "concurrency": 500,
@@ -22,42 +22,42 @@
    "errors": 0,
    "timeouts": 0,
    "err_rate": 0.0,
-   "mean_ms": 628.31,
-   "rps": 722.68
+   "mean_ms": 876.86,
+   "rps": 491.94
   },
   {
    "concurrency": 750,
    "budget": 5000,
    "requests": 5750,
-   "successes": 5750,
-   "errors": 0,
-   "timeouts": 0,
-   "err_rate": 0.0,
-   "mean_ms": 1198.8,
-   "rps": 521.7
+   "successes": 5736,
+   "errors": 14,
+   "timeouts": 14,
+   "err_rate": 0.00243,
+   "mean_ms": 1360.43,
+   "rps": 474.2
   },
   {
    "concurrency": 1000,
    "budget": 5000,
    "requests": 6000,
-   "successes": 6000,
-   "errors": 0,
+   "successes": 5868,
+   "errors": 132,
    "timeouts": 0,
-   "err_rate": 0.0,
-   "mean_ms": 1756.91,
-   "rps": 424.45
+   "err_rate": 0.022,
+   "mean_ms": 2157.29,
+   "rps": 383.67
   }
  ],
- "mean_response_ms": 1013.09,
+ "mean_response_ms": 1269.09,
  "total_requests": 22500,
- "total_successes": 22500,
- "total_errors": 0,
- "err_rate_overall": 0.0,
- "peak_rps": 722.68,
+ "total_successes": 22354,
+ "total_errors": 146,
+ "err_rate_overall": 0.00649,
+ "peak_rps": 491.94,
  "break_concurrency": null,
- "accepted_msgs": 20000,
- "delivered": 15616,
- "lost": 4384,
- "completeness": 0.7808,
- "integrity_note": "/feed returned 15616 of 15616 messages in the room"
+ "accepted_msgs": 19854,
+ "delivered": 16889,
+ "lost": 2965,
+ "completeness": 0.8507,
+ "integrity_note": "/feed returned 16889 of 16889 messages in the room"
 }
