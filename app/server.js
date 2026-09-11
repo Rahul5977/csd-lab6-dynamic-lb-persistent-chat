@@ -289,6 +289,7 @@ const FEED_BYTES = parseInt(process.env.FEED_BYTES || '1048576', 10);
 const FEED_GZIP_MS = parseInt(process.env.FEED_GZIP_MS || '2000', 10);
 const FEED_QUIET_MS = parseInt(process.env.FEED_QUIET_MS || '200', 10);  // "no writes lately"
 const FEED_GZIP_LEVEL = parseInt(process.env.FEED_GZIP_LEVEL || '6', 10);
+const FEED_RECONCILE_MS = parseInt(process.env.FEED_RECONCILE_MS || '2000', 10);
 // Below this size compressing is cheap enough to redo whenever the feed changes,
 // so a small feed is never stale. The rate cap only applies once the feed is big
 // enough for the work to matter.
@@ -385,8 +386,32 @@ function feedTrim() {
   feedCount -= drop;
 }
 
+// Sequence numbers are gap-free per room, so a jump means this backend missed a
+// broadcast — the firehose stayed connected but messages were lost under load,
+// which is how the in-memory feed silently fell 12 % behind the database. A gap
+// schedules a reconciliation against the database rather than being ignored.
+let feedGapPending = false;
+function feedNoteGap() {
+  if (feedGapPending) return;
+  feedGapPending = true;
+  setTimeout(() => {
+    feedGapPending = false;
+    feedReload().catch(() => {});
+  }, FEED_RECONCILE_MS).unref?.();
+}
+
+async function feedReload() {
+  const before = feedCount;
+  feedBuf = Buffer.allocUnsafe(1 << 20);
+  feedLen = 0; feedOffsets = []; feedCount = 0; feedSeen = new Set(); feedLastSeq = 0;
+  feedGz = { buf: null, at: 0, rows: -1, busy: false };
+  await feedLoad(false);
+  log(`feed reconciled after a gap: ${before} -> ${feedCount} messages`);
+}
+
 function feedAppend(entry) {
   if (!entry || !entry.id || feedSeen.has(entry.id)) return;
+  if (feedLastSeq && entry.seq > feedLastSeq + 1) feedNoteGap();
   const row = Buffer.from((feedCount ? ',' : '') + feedRow(entry));
   feedGrow(row.length);
   feedOffsets.push(feedLen + (feedCount ? 1 : 0));   // skip the separating comma
@@ -552,9 +577,15 @@ const server = http.createServer(async (req, res) => {
       // has to be concatenated to know how long the answer is.
       if (!limitParam && sinceParam === null && feedReady) {
         // Whole feed, compressed, when the client accepts it.
+        const etag = `"${feedCount}-${feedLastSeq}"`;
+        if (req.headers['if-none-match'] === etag) {
+          res.writeHead(304, { 'ETag': etag, 'X-Backend-Id': BACKEND_ID });
+          return res.end();
+        }
         const gz = /\bgzip\b/.test(String(req.headers['accept-encoding'] || '')) ? feedGzip() : null;
         if (gz) {
           res.writeHead(200, {
+            'ETag': etag,
             'Content-Type': 'application/json', 'Content-Encoding': 'gzip',
             'Content-Length': gz.length, 'Vary': 'Accept-Encoding',
             'X-Backend-Id': BACKEND_ID, 'X-Feed-Cache': 'live-gzip',
@@ -567,7 +598,7 @@ const server = http.createServer(async (req, res) => {
           ',"truncated":' + (w.rows < feedTotal) + ',"limit":"all","messages":[');
         const tail = Buffer.from(']}');
         res.writeHead(200, {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json', 'ETag': etag,
           'Content-Length': head.length + (w.end - w.start) + tail.length,
           'X-Backend-Id': BACKEND_ID, 'X-Feed-Cache': 'live',
         });

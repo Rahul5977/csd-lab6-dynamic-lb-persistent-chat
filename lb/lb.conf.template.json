@@ -45,5 +45,6 @@
   "passive_fail_threshold": 4,
   "feed_cache_path": "/feed",
   "feed_cache_ms": 200,
-  "feed_cache_max_bytes": 8388608
+  "feed_cache_max_bytes": 2097152,
+  "feed_cache_bytes_per_s": 4194304
 }

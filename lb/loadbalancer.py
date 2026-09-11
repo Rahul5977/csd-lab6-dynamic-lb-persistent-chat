@@ -95,7 +95,12 @@ DEFAULTS = {
     # -- read-through cache for the feed ------------------------------------
     "feed_cache_path": "/feed",      # "" disables it
     "feed_cache_ms": 300,            # how stale a cached feed may be
-    "feed_cache_max_bytes": 8388608,
+    # Above this the feed is NOT cached and is proxied instead. Proxying streams
+    # the body in chunks and never holds a whole copy, so a feed that has grown
+    # past what this container can safely keep in memory costs throughput rather
+    # than costing the balancer its life — it was killed twice learning that.
+    "feed_cache_max_bytes": 2097152,
+    "feed_cache_bytes_per_s": 4194304,   # cap on bandwidth spent keeping it warm
     "access_log": "logs/lb_access.csv",
 }
 
@@ -457,6 +462,8 @@ class FeedCache:
         self.backend = "-"
         self.hits = 0
         self.refreshes = 0
+        self.skipped = 0          # refreshes avoided because nothing had changed
+        self.etag = b""
         self.lock = threading.Lock()
 
     def fresh(self, max_age_ms):
@@ -477,8 +484,14 @@ class FeedCache:
         try:
             sock = socket.create_connection(b.addr(), timeout=cfg["connect_timeout_s"])
             sock.settimeout(cfg["upstream_timeout_s"])
+            # Ask conditionally. The feed is megabytes and mostly random text, so
+            # re-fetching it on a timer costs tens of megabytes a second of internal
+            # traffic for nothing whenever it has not changed — and when it HAS
+            # changed, a 304 costs one round trip to find out.
+            cond = (b"If-None-Match: " + self.etag + b"\r\n") if self.etag else b""
             sock.sendall(("GET %s HTTP/1.1\r\nHost: lb-feed-cache\r\n"
-                          "Accept-Encoding: gzip\r\nConnection: close\r\n\r\n" % path).encode())
+                          "Accept-Encoding: gzip\r\nConnection: close\r\n" % path).encode()
+                         + cond + b"\r\n")
             buf = bytearray()
             while True:
                 chunk = sock.recv(65536)
@@ -492,6 +505,11 @@ class FeedCache:
         except OSError:
             return
         head, sep, _body = bytes(buf).partition(b"\r\n\r\n")
+        if head.startswith(b"HTTP/1.1 304"):
+            self.skipped += 1
+            with self.lock:
+                self.at = time.time()          # still current, just unchanged
+            return
         if not sep or not head.startswith(b"HTTP/1.1 200"):
             return
         # rewrite only the hop-by-hop bits; everything else is the backend's answer
@@ -499,8 +517,13 @@ class FeedCache:
                  if l.split(b":", 1)[0].strip().lower() not in (b"connection", b"keep-alive")]
         out = b"HTTP/1.1 200 OK\r\n" + b"\r\n".join(lines) + \
               b"\r\nX-LB-Feed-Cache: hit\r\nConnection: keep-alive\r\n\r\n" + _body
+        etag = b""
+        for l in head.split(b"\r\n")[1:]:
+            if l[:5].lower() == b"etag:":
+                etag = l.split(b":", 1)[1].strip()
         with self.lock:
             self.body = out
+            self.etag = etag
             self.at = time.time()
             self.backend = b.id
             self.refreshes += 1
@@ -512,7 +535,13 @@ FEED_CACHE = FeedCache()
 def feed_cache_loop():
     while True:
         cfg = LB_STATE.cfg
-        interval = max(0.05, cfg.get("feed_cache_ms", 300) / 1000.0)
+        # Pace by bytes as well as by time: keeping a six-megabyte feed warm at the
+        # nominal interval would spend thirty megabytes a second of internal
+        # bandwidth on the refresh alone. The floor is the configured interval; a
+        # large feed simply refreshes less often.
+        size = len(FEED_CACHE.body or b"")
+        budget = max(1, cfg.get("feed_cache_bytes_per_s", 4 * 1024 * 1024))
+        interval = max(cfg.get("feed_cache_ms", 200) / 1000.0, size / budget)
         try:
             if cfg.get("feed_cache_path") and LB_STATE.routable_backends():
                 FEED_CACHE.refresh()
@@ -1019,7 +1048,7 @@ def stats_dict():
         "rt_cap_ms": lb.cfg["rt_cap_ms"], "current_backend": lb.current_id, "switches": lb.switches,
         "backends": [b.snapshot(lb.cfg) for b in lb.backends],
         "feed_cache": {"path": lb.cfg.get("feed_cache_path"), "hits": FEED_CACHE.hits,
-                       "refreshes": FEED_CACHE.refreshes,
+                       "refreshes": FEED_CACHE.refreshes, "unchanged": FEED_CACHE.skipped,
                        "bytes": len(FEED_CACHE.body or b""),
                        "age_ms": round((time.time() - FEED_CACHE.at) * 1000) if FEED_CACHE.at else None,
                        "from": FEED_CACHE.backend},
