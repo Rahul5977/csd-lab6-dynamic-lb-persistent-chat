@@ -24,7 +24,7 @@ print(json.dumps({"listen_host":"127.0.0.1","listen_port":$LB,"algorithm":"thres
  "backends":[{"id":"b1","host":"127.0.0.1","port":18001,"weight":1}],
  "health_interval_s":2,"health_timeout_s":4,"fail_threshold":2,"rise_threshold":1,"register_token":"$TOKEN",
  "discovery":{"candidates":[{"host":"127.0.0.1","port":18002},{"host":"127.0.0.1","port":18003}],"interval_s":2},
- "access_log":"$RUN/lb_access.csv"}, indent=1))
+ "access_log":"$RUN/lb_access.csv","feed_cache_path":"/feed","feed_cache_ms":300}, indent=1))
 EOF
     python3 lb/loadbalancer.py $RUN/lb.conf.json >> $RUN/lb.log 2>&1 & echo $! > $RUN/lb.pid
     for i in $(seq 1 $n); do start_backend b$i; done

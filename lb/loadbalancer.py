@@ -92,6 +92,10 @@ DEFAULTS = {
     "discovery": {"candidates": [], "interval_s": 5,    # [{"host","port"}] slots to probe
                   "require_version": ""},              # admit only backends reporting this /health version
     "prune_after_s": 600,            # remove dynamic backends DOWN this long
+    # -- read-through cache for the feed ------------------------------------
+    "feed_cache_path": "/feed",      # "" disables it
+    "feed_cache_ms": 300,            # how stale a cached feed may be
+    "feed_cache_max_bytes": 8388608,
     "access_log": "logs/lb_access.csv",
 }
 
@@ -436,6 +440,85 @@ class LB:
 
 
 LB_STATE = LB()
+
+
+# ── Read-through cache for the feed ─────────────────────────────────────────
+# /feed is the same answer for every caller and it is the largest thing this
+# system serves. Proxying it means each body crosses the network twice — backend
+# to balancer, balancer to client — and costs a backend round trip per request.
+# Caching it here removes both: the balancer refreshes one copy a few times a
+# second and answers every reader out of memory, which is what a reverse proxy in
+# front of a read-heavy endpoint is for. The bytes are exactly the ones the
+# backend produced, headers included.
+class FeedCache:
+    def __init__(self):
+        self.body = None          # complete HTTP response, ready to write
+        self.at = 0.0
+        self.backend = "-"
+        self.hits = 0
+        self.refreshes = 0
+        self.lock = threading.Lock()
+
+    def fresh(self, max_age_ms):
+        return self.body is not None and (time.time() - self.at) * 1000 < max_age_ms
+
+    def refresh(self):
+        cfg = LB_STATE.cfg
+        path = cfg.get("feed_cache_path") or ""
+        if not path:
+            return
+        # Pick directly rather than through pick(): the refresher is not client
+        # traffic, and routing it through the selector would advance round-robin
+        # state and skew the distribution every algorithm is judged on.
+        pool = LB_STATE.routable_backends()
+        if not pool:
+            return
+        b = min(pool, key=lambda x: x.load_index(cfg))
+        try:
+            sock = socket.create_connection(b.addr(), timeout=cfg["connect_timeout_s"])
+            sock.settimeout(cfg["upstream_timeout_s"])
+            sock.sendall(("GET %s HTTP/1.1\r\nHost: lb-feed-cache\r\n"
+                          "Accept-Encoding: gzip\r\nConnection: close\r\n\r\n" % path).encode())
+            buf = bytearray()
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                if len(buf) > cfg["feed_cache_max_bytes"]:
+                    sock.close()
+                    return
+            sock.close()
+        except OSError:
+            return
+        head, sep, _body = bytes(buf).partition(b"\r\n\r\n")
+        if not sep or not head.startswith(b"HTTP/1.1 200"):
+            return
+        # rewrite only the hop-by-hop bits; everything else is the backend's answer
+        lines = [l for l in head.split(b"\r\n")[1:]
+                 if l.split(b":", 1)[0].strip().lower() not in (b"connection", b"keep-alive")]
+        out = b"HTTP/1.1 200 OK\r\n" + b"\r\n".join(lines) + \
+              b"\r\nX-LB-Feed-Cache: hit\r\nConnection: keep-alive\r\n\r\n" + _body
+        with self.lock:
+            self.body = out
+            self.at = time.time()
+            self.backend = b.id
+            self.refreshes += 1
+
+
+FEED_CACHE = FeedCache()
+
+
+def feed_cache_loop():
+    while True:
+        cfg = LB_STATE.cfg
+        interval = max(0.05, cfg.get("feed_cache_ms", 300) / 1000.0)
+        try:
+            if cfg.get("feed_cache_path") and LB_STATE.routable_backends():
+                FEED_CACHE.refresh()
+        except Exception as e:
+            print(f"[lb] feed cache refresh failed (surviving): {e}", flush=True)
+        time.sleep(interval)
 
 # ───────────────────────────── health + discovery ───────────────────────────
 
@@ -802,6 +885,20 @@ async def handle_client(creader, cwriter):
                 await cwriter.drain()
                 continue
 
+            # The cached feed answers here, before a backend is even chosen: no
+            # upstream connection, no second copy of the body across the network.
+            cfg = LB_STATE.cfg
+            fp = cfg.get("feed_cache_path") or ""
+            if (fp and method == b"GET" and path.decode(errors="replace") == fp
+                    and b"gzip" in hmap.get(b"accept-encoding", b"").lower()
+                    and FEED_CACHE.fresh(cfg.get("feed_cache_ms", 300) * 3)):
+                body_out = FEED_CACHE.body
+                cwriter.write(body_out)
+                await cwriter.drain()
+                FEED_CACHE.hits += 1
+                LB_STATE.log(client_ip, "GET", fp, "cache", 0.0, 200, len(body_out))
+                continue
+
             is_ws = (b"upgrade" in hmap.get(b"connection", b"").lower()
                      and hmap.get(b"upgrade", b"").lower() == b"websocket")
 
@@ -909,6 +1006,11 @@ def stats_dict():
         "switch_threshold": lb.cfg["switch_threshold"], "inflight_cap": lb.cfg["inflight_cap"],
         "rt_cap_ms": lb.cfg["rt_cap_ms"], "current_backend": lb.current_id, "switches": lb.switches,
         "backends": [b.snapshot(lb.cfg) for b in lb.backends],
+        "feed_cache": {"path": lb.cfg.get("feed_cache_path"), "hits": FEED_CACHE.hits,
+                       "refreshes": FEED_CACHE.refreshes,
+                       "bytes": len(FEED_CACHE.body or b""),
+                       "age_ms": round((time.time() - FEED_CACHE.at) * 1000) if FEED_CACHE.at else None,
+                       "from": FEED_CACHE.backend},
         "candidates": lb.cfg["discovery"].get("candidates", []),
         "recent_events": list(lb.events)[-10:],
     }
@@ -1068,6 +1170,7 @@ def main():
     threading.Thread(target=log_flusher, daemon=True).start()
     threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=discovery_loop, daemon=True).start()
+    threading.Thread(target=feed_cache_loop, daemon=True).start()
     try:
         asyncio.run(serve())
     except KeyboardInterrupt:
