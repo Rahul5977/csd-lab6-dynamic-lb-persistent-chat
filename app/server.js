@@ -289,7 +289,8 @@ const FEED_BYTES = parseInt(process.env.FEED_BYTES || '1048576', 10);
 const FEED_GZIP_MS = parseInt(process.env.FEED_GZIP_MS || '2000', 10);
 const FEED_QUIET_MS = parseInt(process.env.FEED_QUIET_MS || '200', 10);  // "no writes lately"
 const FEED_GZIP_LEVEL = parseInt(process.env.FEED_GZIP_LEVEL || '6', 10);
-const FEED_RECONCILE_MS = parseInt(process.env.FEED_RECONCILE_MS || '2000', 10);
+const FEED_POLL_MS = parseInt(process.env.FEED_POLL_MS || '150', 10);
+const FEED_POLL_MAX = parseInt(process.env.FEED_POLL_MAX || '20000', 10);
 // Below this size compressing is cheap enough to redo whenever the feed changes,
 // so a small feed is never stale. The rate cap only applies once the feed is big
 // enough for the work to matter.
@@ -302,6 +303,12 @@ let feedTotal = 0;               // messages in the room, including any trimmed
 let feedReady = false;           // the initial load from the database has finished
 let feedSeen = new Set();        // ids already in the buffer (the firehose can repeat)
 let feedLastSeq = 0;             // highest sequence number in the buffer
+// The poll keeps its OWN cursor. Sharing feedLastSeq with the broadcast was a
+// silent data loss: the broadcast would jump the cursor ahead to the newest
+// message it had just delivered, and the next poll would start from there and skip
+// every message in between — which is precisely the run where the feed held 16 601
+// of 19 984. This one only ever advances by rows the poll itself has read.
+let feedPollSeq = 0;
 let feedLastAppend = 0;          // when the buffer last changed
 
 function feedGrow(need) {
@@ -386,32 +393,44 @@ function feedTrim() {
   feedCount -= drop;
 }
 
-// Sequence numbers are gap-free per room, so a jump means this backend missed a
-// broadcast — the firehose stayed connected but messages were lost under load,
-// which is how the in-memory feed silently fell 12 % behind the database. A gap
-// schedules a reconciliation against the database rather than being ignored.
-let feedGapPending = false;
-function feedNoteGap() {
-  if (feedGapPending) return;
-  feedGapPending = true;
-  setTimeout(() => {
-    feedGapPending = false;
-    feedReload().catch(() => {});
-  }, FEED_RECONCILE_MS).unref?.();
+// The feed's CORRECTNESS comes from polling the database; its freshness comes from
+// the broadcast.
+//
+// The broadcast is fine for pushing a message to a browser connected right now:
+// losing one there costs a redraw. It turned out not to be a safe basis for what
+// the feed CONTAINS — under the evaluation's load it dropped enough that every
+// backend's feed silently fell 12 % behind the database, and nothing noticed. A
+// poll for "everything after the sequence number I already have" cannot lose
+// anything: if a round is missed the next one returns those rows too. It costs one
+// small query per backend every FEED_POLL_MS and returns nothing when the room is
+// idle. Duplicates between the two paths are dropped by the id set.
+let feedPolling = false;
+
+async function feedPollOnce() {
+  if (feedPolling || !feedReady) return;
+  feedPolling = true;
+  try {
+    const out = await db('GET', `/feed?room=${PUBLIC_ROOM}&since=${feedPollSeq}&limit=${FEED_POLL_MAX}`);
+    for (const m of (out && out.messages) || []) {
+      feedAppend(m);
+      if (m.seq > feedPollSeq) feedPollSeq = m.seq;
+    }
+    if (out && typeof out.total === 'number' && out.total > feedTotal) feedTotal = out.total;
+    // More waiting than one page could carry: go straight round again.
+    if (out && out.next_since != null) setImmediate(() => { feedPolling = false; feedPollOnce(); });
+  } catch (e) {
+    /* the next round tries again */
+  } finally {
+    feedPolling = false;
+  }
 }
 
-async function feedReload() {
-  const before = feedCount;
-  feedBuf = Buffer.allocUnsafe(1 << 20);
-  feedLen = 0; feedOffsets = []; feedCount = 0; feedSeen = new Set(); feedLastSeq = 0;
-  feedGz = { buf: null, at: 0, rows: -1, busy: false };
-  await feedLoad(false);
-  log(`feed reconciled after a gap: ${before} -> ${feedCount} messages`);
+function feedPollLoop() {
+  setInterval(feedPollOnce, FEED_POLL_MS).unref?.();
 }
 
 function feedAppend(entry) {
   if (!entry || !entry.id || feedSeen.has(entry.id)) return;
-  if (feedLastSeq && entry.seq > feedLastSeq + 1) feedNoteGap();
   const row = Buffer.from((feedCount ? ',' : '') + feedRow(entry));
   feedGrow(row.length);
   feedOffsets.push(feedLen + (feedCount ? 1 : 0));   // skip the separating comma
@@ -426,7 +445,7 @@ function feedAppend(entry) {
   if (feedCount > FEED_MAX + (FEED_MAX >> 4)) feedTrim();   // trim in blocks, not per row
 }
 
-// Load what the room already holds at boot, and catch up after any gap.
+// Load what the room already holds at boot, and catch up after a reconnect.
 //
 // The buffer is fed by the firehose, so anything that interrupts the firehose —
 // the database service restarting, a dropped socket — would otherwise leave this
@@ -439,7 +458,10 @@ async function feedLoad(catchUp) {
       : `/feed?room=${PUBLIC_ROOM}&limit=${FEED_MAX}`;
     const out = await db('GET', q);
     const before = feedCount;
-    for (const m of (out && out.messages) || []) feedAppend(m);
+    for (const m of (out && out.messages) || []) {
+      feedAppend(m);
+      if (m.seq > feedPollSeq) feedPollSeq = m.seq;
+    }
     feedTotal = Math.max((out && out.total) || 0, feedCount);
     feedReady = true;
     if (!catchUp) {
@@ -470,6 +492,9 @@ function connectFirehose() {
       const ev = JSON.parse(data);
       if (ev.type === 'msg') {
         if (ev.entry && ev.entry.id) remember(ev.entry.id, { seq: ev.entry.seq, id: ev.entry.id });
+        // The broadcast makes the feed current immediately; the poll below is what
+        // makes it correct. Anything the broadcast drops the next poll picks up,
+        // and anything the poll returns twice is dropped by the id set.
         if (ev.room === PUBLIC_ROOM) feedAppend(ev.entry);
         deliverLocal(ev.room, ev.entry);
       }
@@ -818,7 +843,7 @@ async function ensurePublicRoom() {
 // connections — which the balancer reads as "this backend is down".
 server.listen(PORT, HOST, 4096, () => log(`backend ${VERSION} listening on ${HOST}:${PORT}, db=${DB_URL}${LB_URL ? ', lb=' + LB_URL : ''}`));
 connectFirehose();
-ensurePublicRoom().then(feedLoad);
+ensurePublicRoom().then(feedLoad).then(feedPollLoop);
 
 // Graceful drain: deregister first so the LB stops sending, then finish in-flight.
 let shuttingDown = false;

@@ -1,0 +1,85 @@
+{
+ "run_id": "SIM_both_break",
+ "board": "breakpoint",
+ "url": "http://10.1.75.53:3269",
+ "stages": [
+  {
+   "concurrency": 200,
+   "budget": 5000,
+   "requests": 5200,
+   "successes": 5200,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 269.87,
+   "rps": 680.84
+  },
+  {
+   "concurrency": 350,
+   "budget": 5000,
+   "requests": 5350,
+   "successes": 5350,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 500.99,
+   "rps": 621.9
+  },
+  {
+   "concurrency": 500,
+   "budget": 5000,
+   "requests": 5500,
+   "successes": 5500,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 790.31,
+   "rps": 538.19
+  },
+  {
+   "concurrency": 750,
+   "budget": 5000,
+   "requests": 5750,
+   "successes": 5750,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 1588.14,
+   "rps": 390.92
+  },
+  {
+   "concurrency": 1000,
+   "budget": 5000,
+   "requests": 6000,
+   "successes": 5716,
+   "errors": 284,
+   "timeouts": 284,
+   "err_rate": 0.04733,
+   "mean_ms": 2123.88,
+   "rps": 323.33
+  },
+  {
+   "concurrency": 1500,
+   "budget": 5000,
+   "requests": 6500,
+   "successes": 5133,
+   "errors": 1367,
+   "timeouts": 1367,
+   "err_rate": 0.21031,
+   "mean_ms": 2016.3,
+   "rps": 282.16
+  }
+ ],
+ "mean_response_ms": 1226.74,
+ "total_requests": 34300,
+ "total_successes": 32649,
+ "total_errors": 1651,
+ "err_rate_overall": 0.04813,
+ "peak_rps": 680.84,
+ "break_concurrency": 1500,
+ "accepted_msgs": 30000,
+ "delivered": 24406,
+ "lost": 5594,
+ "completeness": 0.8135,
+ "integrity_note": "/feed returned 35200 of 41764 messages in the room"
+}
