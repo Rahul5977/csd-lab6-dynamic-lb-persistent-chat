@@ -7,6 +7,8 @@
 #   bash scripts/deploy.sh movedb sys3     move the database (data included) to another system
 #   bash scripts/deploy.sh lb              dynamic LB v2      -> sys1:3000  (tmux "lb6", public 3269)
 #   bash scripts/deploy.sh sys2|sys3|sys4  backend v3         -> sys2:3000 / sys3:3000 / sys4:3001
+#   bash scripts/deploy.sh backends        all three, one at a time, waiting for the
+#                                          balancer to re-admit each before the next
 #   bash scripts/deploy.sh all             node22 + db + sys2 + lb   (sys3/sys4 join dynamically: scripts/scale.sh)
 #
 # Everything lives in ~/assignment6 on each box; ~/assignment5 (Lab 5) is never
@@ -48,6 +50,26 @@ LB_TOKEN=$(grep '^LB_TOKEN=' .env | cut -d= -f2)
 push() {  # $1 = ssh alias, $2... = local dirs/files (no rsync on the lab boxes: tar over ssh)
   local host="$1"; shift
   COPYFILE_DISABLE=1 tar --no-xattrs -czf - --exclude data --exclude '*.log' --exclude __pycache__ "$@" | ssh "$host" "mkdir -p $REMOTE_DIR && cd $REMOTE_DIR && tar xzf -"
+}
+
+# Wait until the LOAD BALANCER considers a backend routable again. Waiting only
+# for the backend's own /health is not enough: the balancer needs a heartbeat or
+# two probes before it starts using it, and restarting the next backend inside
+# that window is how a rolling deploy ends up with an empty pool. An evaluation
+# run that lands in that gap sees the whole service disappear.
+lb_has() {  # $1 = backend id
+  for i in $(seq 1 40); do
+    if curl -sS -m 4 "http://10.1.75.53:3269/lb/stats" 2>/dev/null \
+       | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+b = next((x for x in d['backends'] if x['id'] == '$1'), None)
+sys.exit(0 if b and b['healthy'] else 1)" 2>/dev/null; then
+      echo "   $1 routable again ✔"; return 0
+    fi
+    sleep 1
+  done
+  echo "   WARNING: the balancer never marked $1 routable"; return 1
 }
 
 wait_ok() {  # $1 ssh alias, $2 url (inside the box), $3 label
@@ -112,6 +134,14 @@ deploy_backend() {  # $1 = sys2|sys3|sys4
     echo \$! > backend.pid
   "
   wait_ok "$host" "http://127.0.0.1:$port/health" "$sys" || { ssh "$host" "tail -20 $REMOTE_DIR/backend.log"; return 1; }
+  lb_has "$sys" || true
+}
+
+# Restart every backend one at a time, never leaving the pool empty.
+deploy_backends() {
+  for s in sys2 sys3 sys4; do
+    deploy_backend "$s" || return 1
+  done
 }
 
 deploy_lb() {
@@ -157,6 +187,7 @@ case "${1:?usage: deploy.sh node22|db|lb|movedb|sys2|sys3|sys4|all}" in
   db)              deploy_db ;;
   lb)              deploy_lb ;;
   sys2|sys3|sys4)  deploy_backend "$1" ;;
+  backends)        deploy_backends ;;
   all)             install_node22 lbsys1; install_node22 "$DB_HOST"; deploy_db; deploy_backend sys2; deploy_lb; echo; echo "sys3/sys4 join on demand: bash scripts/scale.sh sys3 up" ;;
   *) echo "unknown target $1"; exit 1 ;;
 esac

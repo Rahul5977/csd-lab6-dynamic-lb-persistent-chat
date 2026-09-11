@@ -17,6 +17,10 @@
 #                                       database and is still reachable by the chat.
 #   bash scripts/feed_mode.sh status    what the backends are running now
 #
+# Every mode change is a rolling restart: one backend at a time, and the next only
+# after the balancer has marked the previous one routable again, so a leaderboard
+# run that overlaps a deploy still has somewhere to go.
+#
 # Either mode always reports the room's true total in `count`, and ?limit= and
 # ?since= reach the complete history in both.
 # ============================================================================
@@ -44,16 +48,16 @@ print(f\"room={d['room']} count={d['count']} returned={d['returned']} truncated=
 
 case "${1:-status}" in
   full)
-    for s in sys2 sys3 sys4; do FEED_BYTES=1048576 bash scripts/deploy.sh "$s" | tail -1; done
+    FEED_BYTES=1048576 bash scripts/deploy.sh backends | grep -E "healthy|routable"
     echo "feed mode: FULL (gzip for clients that accept it)"
     ;;
   window)
-    for s in sys2 sys3 sys4; do FEED_BYTES=262144 FEED_GZIP_MS=999999999 bash scripts/deploy.sh "$s" | tail -1; done
+    FEED_BYTES=262144 FEED_GZIP_MS=999999999 bash scripts/deploy.sh backends | grep -E "healthy|routable"
     echo "feed mode: WINDOW (newest 256 KB)"
     ;;
   fresh)
     room="${2:-room-$(date +%H%M%S)}"
-    for s in sys2 sys3 sys4; do PUBLIC_ROOM="$room" bash scripts/deploy.sh "$s" | tail -1; done
+    PUBLIC_ROOM="$room" bash scripts/deploy.sh backends | grep -E "healthy|routable"
     echo "feed mode: routes now on the empty room '$room'; nothing was deleted"
     ;;
   status) ;;
