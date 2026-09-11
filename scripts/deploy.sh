@@ -123,7 +123,7 @@ deploy_backend() {  # $1 = sys2|sys3|sys4
     cd $REMOTE_DIR
     export PATH=\"\$HOME/node/bin:\$PATH\"
     command -v node >/dev/null || { echo 'no node — run scripts/install_node.sh $host first'; exit 1; }
-    printf 'PORT=%s\nBACKEND_ID=%s\nDB_URL=http://%s:%s\nLB_URL=http://%s:%s\nLB_TOKEN=%s\nADVERTISE_HOST=%s\nADVERTISE_PORT=%s\nLB_HEARTBEAT_S=5\nLOG_LEVEL=info\nUV_THREADPOOL_SIZE=2\nPUBLIC_ROOM=%s\nFEED_MAX=%s\nFEED_BYTES=%s\n' \
+    printf 'PORT=%s\nBACKEND_ID=%s\nDB_URL=http://%s:%s\nLB_URL=http://%s:%s\nLB_TOKEN=%s\nADVERTISE_HOST=%s\nADVERTISE_PORT=%s\nLB_HEARTBEAT_S=5\nLOG_LEVEL=info\nUV_THREADPOOL_SIZE=4\nPUBLIC_ROOM=%s\nFEED_MAX=%s\nFEED_BYTES=%s\n' \
         '$port' '$sys' '$DB_IP' '$DB_PORT' '$SYS1_IP' '$LB_PORT' '$LB_TOKEN' '$ip' '$port' '$PUBLIC_ROOM' "${FEED_MAX:-35000}" "${FEED_BYTES:-1048576}" > .env
     # stop OUR previous instance (pidfile) and, on sys2/sys3, the Lab 5 backend holding port $port
     [ -f backend.pid ] && kill \$(cat backend.pid) 2>/dev/null || true

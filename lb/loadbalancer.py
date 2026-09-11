@@ -440,7 +440,11 @@ LB_STATE = LB()
 # ───────────────────────────── health + discovery ───────────────────────────
 
 def probe(host, port, timeout):
-    """GET /health. Returns (ok, ms, json_or_None)."""
+    """GET /health. Returns (ok, ms, json_or_None, reason).
+
+    `reason` distinguishes a backend that REFUSED the connection from one that was
+    simply too busy to answer in time. Treating those the same is how a cluster
+    under heavy load ejects its own healthy backends and collapses onto one."""
     t0 = time.time()
     try:
         with socket.create_connection((host, port), timeout=timeout) as s:
@@ -462,9 +466,11 @@ def probe(host, port, timeout):
             data = json.loads(body.decode() or "null")
         except ValueError:
             pass
-        return ok, ms, data
+        return ok, ms, data, ("ok" if ok else "status")
+    except socket.timeout:
+        return False, (time.time() - t0) * 1000, None, "timeout"
     except OSError:
-        return False, (time.time() - t0) * 1000, None
+        return False, (time.time() - t0) * 1000, None, "refused"
 
 
 def health_loop():
@@ -472,7 +478,7 @@ def health_loop():
     while True:
         cfg = LB_STATE.cfg
         for b in list(LB_STATE.backends):
-            ok, ms, data = probe(b.host, b.port, cfg["health_timeout_s"])
+            ok, ms, data, why = probe(b.host, b.port, cfg["health_timeout_s"])
             if ok:
                 b.probe_ms = ms
                 b.last_seen = time.time()
@@ -494,6 +500,16 @@ def health_loop():
                 elif b.state == DEGRADED and not slow:
                     b.state = UP
                     LB_STATE.event("recovered", b.id, f"probe {ms:.0f} ms")
+            elif why == "timeout":
+                # Busy, not dead. It accepted the connection and simply did not
+                # finish answering: mark it degraded so the threshold rule sends it
+                # less, but never take it out of the pool for being slow.
+                b.consec_ok = 0
+                b.last_seen = time.time()
+                b.probe_ms = ms
+                if b.state == UP:
+                    b.state = DEGRADED
+                    LB_STATE.event("degraded", b.id, f"health probe timed out after {ms:.0f} ms")
             else:
                 b.consec_fail += 1
                 b.consec_ok = 0
@@ -502,7 +518,7 @@ def health_loop():
                     if others:
                         b.state = DOWN
                         b.down_since = time.time()
-                        LB_STATE.event("ejected", b.id, f"{b.consec_fail} failed checks")
+                        LB_STATE.event("ejected", b.id, f"{b.consec_fail} refused connections")
                     else:
                         print(f"[lb] {b.id} failing checks but is the last one — keeping it (fail-open)", flush=True)
                 elif b.state == DRAINING and b.consec_fail >= cfg["fail_threshold"]:
@@ -527,7 +543,7 @@ def discovery_loop():
             host, port = c["host"], int(c["port"])
             if (host, port) in known:
                 continue
-            ok, ms, data = probe(host, port, min(2.0, cfg["health_timeout_s"]))
+            ok, ms, data, _why = probe(host, port, min(2.0, cfg["health_timeout_s"]))
             if ok:
                 want = cfg["discovery"].get("require_version")
                 if want and not str((data or {}).get("version", "")).startswith(want):
