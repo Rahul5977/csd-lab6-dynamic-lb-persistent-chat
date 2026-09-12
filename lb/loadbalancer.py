@@ -120,7 +120,8 @@ DEFAULTS = {
     # exactly what happened: it had been dead for fifteen hours because an 8.8 MB
     # feed was over the old 2 MB limit.
     "feed_cache_max_bytes": 25165824,
-    "feed_quiet_ms": 400,            # writes quieter than this -> proxy, do not cache
+    "feed_quiet_ms": 400,            # idle for this long -> proxy, do not cache
+    "feed_stale_max_ms": 3000,       # never serve a cached feed older than this
     "access_log": "logs/lb_access.csv",
 }
 
@@ -648,11 +649,12 @@ class FeedCache:
         cur = self.revalidating
         if cur is None or cur.done():
             cur = self.revalidating = asyncio.ensure_future(self._revalidate())
-        if self.body is not None:
+        if self.body is not None and self.fresh(float(cfg.get("feed_stale_max_ms", 3000))):
             # Stale-while-revalidate: hand back the copy we already have and let the
             # refresh land behind it. Blocking every reader on one five-megabyte
             # fetch turns a shared cache back into a queue, which is the problem it
-            # exists to solve.
+            # exists to solve. Past feed_stale_max_ms it stops being "slightly
+            # behind" and starts being wrong, so beyond that we wait for the truth.
             self.stale_serves += 1
             return True
         # Nothing cached at all (first request after a restart): this one waits.

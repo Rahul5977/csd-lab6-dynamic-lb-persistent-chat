@@ -49,5 +49,6 @@
   "backend_slots": 56,
   "feed_slots": 8,
   "admission_enabled": true,
-  "feed_quiet_ms": 400
+  "feed_quiet_ms": 400,
+  "feed_stale_max_ms": 3000
 }
