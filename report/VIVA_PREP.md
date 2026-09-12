@@ -82,6 +82,20 @@ queue is first-order. The sweep is what proved that.
   own probe of ten awkward inputs passed, because every case had its awkwardness in the middle of the
   string rather than at the ends. Fixed, with ten assertions now covering it; 20 of 20 bodies and
   senders round-trip exactly.
+- **What happens if the balancer process dies?** It used to stay dead — the kernel OOM-killed it
+  mid-run once and the URL was down until I noticed; that run scored rank 99. It runs under a
+  supervisor now that restarts it within a second and logs why it exited. I verified it with SIGKILL.
+- **How is the cache's memory bounded?** By counting live *buffers*, not readers. Every refresh makes a
+  new copy and a slow reader pins the old one, so generations were unbounded and sys1 reached 461 of 512
+  MB. The first fix counted readers — a hundred readers of one buffer were charged a hundred copies —
+  and it refused half of all feed reads. The second counts distinct buffers; over budget, a reader gets
+  a copy already in memory. Budget 32 MB, ceiling per copy 16 MB (a full ladder is ~10 MB).
+- **Where does the CPU go under the real evaluation?** I sampled all four cgroups during a graded run.
+  The three backends were throttled in 26–30 of 50 scheduling periods; the balancer in none. So the
+  backends are the bottleneck. Per message the database did an insert, a serialise and three WebSocket
+  sends, then three more serialisations for the backends' polls; each backend parsed every message
+  twice. Fixed by one firehose frame per commit batch and a poll cursor that advances on contiguous
+  sequence numbers — the gap-safety is kept, the double parse is gone.
 - **Does /feed really return all messages?** Yes — every message in the room, with the true total,
   how many were returned, and whether it was truncated. `?limit=` and `?since=` are still there for
   paging. It was originally a 200-message window; §14.5 of the report explains why that was wrong.
@@ -175,8 +189,9 @@ ejects, restart, re-admit, zero client errors throughout.
 | chosen threshold | **T = 0.15** on max(cgroup CPU, in-flight / 56, EWMA / 250 ms) |
 | threshold vs round robin, 60 clients, 3 backends | 260 vs 221 req/s · 447 vs 494 ms p95 |
 | threshold under light / heavy load | 38:1:1 on one backend · 537:502:461 spread |
-| leaderboard, static board | **rank 1** · 20 000 / 20 000 requests · **0 errors** · 351 ms mean |
-| leaderboard, breakpoint board | **rank 4** · 38 583 successes · held the ladder to **2 500** users |
+| leaderboard, best placing | **1st** static (0 errors, 351 ms) · **4th** breakpoint (38 583, held to 2 500) |
+| leaderboard, latest completed run | 2nd static (0 errors, 261 ms) · 6th breakpoint (37 936) — 100 % complete, 100/100 correct |
+| four-system profile under the graded load | backends throttled 26–30 / 50 periods · balancer 0 · sys1 peak 461 MB |
 | message completeness, both boards | **100 %** |
 | content correctness | was 94-97 / 100 (trimming + name filtering) · now 20 / 20 round-trip exactly |
 | admission control, breakpoint throughput | before: 276 → 78 req/s · after: flat ~175 to 2 500 users |

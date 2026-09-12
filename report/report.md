@@ -381,6 +381,16 @@ cannot be recovered. A cache refreshed on a timer is always one interval behind,
 | Older than that | served immediately, and **one** conditional `If-None-Match` request is sent to a backend behind it — stale-while-revalidate, so readers are never queued behind one multi-megabyte fetch |
 | Older than `feed_stale_max_ms` (3 s) | the reader waits for the revalidated answer; past this point it is not "slightly behind", it is wrong |
 | The balancer is **idle** — no request in flight or queued, and no write for 400 ms | the cache is bypassed entirely and the read is proxied to a backend, so the answer is authoritative |
+| The body is larger than `feed_cache_max_bytes` (16 MB) | not cached; proxied and streamed in chunks, never held whole. A full 40 000-message ladder measured ~10.3 MB, so this is headroom (§14.8 has the run where it was set too low) |
+| Admitting one more reader would pin more than `feed_cache_generation_budget` (32 MB) | the reader is handed a copy already in memory rather than sent to a backend |
+
+That last row is the memory bound that was missing when the balancer was first killed by the kernel
+(§14.8). Every revalidation allocates a new copy of the feed, and a client still streaming the previous
+one keeps it alive, so the number of live *generations* is however many slow readers span a refresh.
+What is counted is generations, not readers: a hundred clients streaming the same buffer cost one
+buffer. The first version charged each reader the full body, over-counted by two orders of magnitude,
+refused more than half of all feed reads and broke a stage that had previously held — the second
+version counts distinct buffers, and a reader that still cannot be admitted gets an existing one.
 
 That last row is what makes the trade-off safe. The evaluation checks completeness after the load
 stops, which is exactly when the balancer is idle, so the staleness is spent only during load where
@@ -1112,8 +1122,69 @@ And the content-correctness score of 94 to 97 was a genuine defect in this appli
 measurement artefact, still present when these runs were recorded. §14.6 is what it was and how it
 was fixed.
 
-On the course leaderboard, which ranks these two ladders across the class, the system finished **1st**
-on the first and **4th** on the second.
+On the course leaderboard, which ranks these two ladders across the class, that run placed **1st** on
+the first and **4th** on the second. The board is live and other submissions kept improving; §14.8 is
+the work since, with the latest per-stage record and the standing at the time of writing.
+
+### 14.8 Keeping the balancer alive, and what a graded run costs each system
+
+Three more things happened after §14.7, two of them defects of mine, and the third is the
+measurement the assignment asks for at the load it is actually judged on.
+
+**The balancer was killed by the kernel and nothing restarted it.** A later run scored rank 99 on
+the breakpoint board with "error rate 100 % at 350 users": the process was simply gone. `oom_kill`
+on sys1 had incremented, the log stopped mid-run with no shutdown line, and the public URL stayed dead
+until a human noticed. The cause was the feed cache holding a decoded second copy of a 10 MB feed and
+an unbounded number of live generations. Both are bounded now (§6.6), and the balancer runs under a
+supervisor (`lb/supervise.sh`) that restarts it within a second and records why it exited. Verified by
+SIGKILL: back and serving in about one second, the log reading `EXITED rc=137 … restarting`. One
+failed stage is recoverable; an endpoint that is down for hours is not.
+
+**The cache ceiling was then set too low.** Fixing the memory kill, I set `feed_cache_max_bytes` to
+8 MB. A full ladder's feed reaches ~10.3 MB. In the next graded run the feed crossed 8 MB at exactly
+the 750-user stage, the cache refused to hold it, every feed read from there fell to the 8-slot
+proxied path, and 4 613 of 8 612 feed reads returned 502 — 53 %. The run still placed 2nd on the
+static board and 6th on the breakpoint board with 100 % completeness and 100/100 correctness, which
+says how much the rest of the design was carrying. The ceiling is 16 MB now, which a 40 000-message
+ladder cannot reach.
+
+**Utilisation of all four systems under the evaluation's own load.** §11.3 measures utilisation
+under my generator. This is the same measurement taken while the course's generator drove the public
+URL through both ladders, sampled once a second from each container's cgroup:
+
+{{T_GRADED_UTIL}}
+
+{{C_GRADED_UTIL}}
+
+The reading that decides the next step is not the averages but the **throttling**: over a 5-second
+window at the height of the run, all three backends were stopped by the scheduler for exceeding their
+one-core quota in 26–30 of 50 periods, while sys1 was throttled in none. The backends are the
+bottleneck, not the balancer — and the per-stage record says the same thing from the other side: at
+500 users this system served **884 req/s** against the static leader's 789, but at 167 ms against 48.
+Throughput is there; per-request service time is not, and that is CPU on the backends.
+
+Where it goes is visible in the code. Every message cost the database one insert, one serialisation
+and three WebSocket sends for the firehose, then three more serialisations when each backend's 150 ms
+poll re-fetched the same rows; every backend then parsed each message twice — once from the firehose,
+again from the poll — and serialised it once into its feed buffer. Three changes, all deployed and
+covered by the suites:
+
+* **One firehose frame per commit batch**, not per message. The database already commits ~10 rows per
+  transaction under load; it now broadcasts them as one frame. Roughly a tenfold cut in that work on
+  the core the database shares with a backend.
+* **The poll cursor advances from the firehose when the next sequence number is contiguous.** The
+  cursor was kept separate deliberately, after an earlier version let it jump ahead and skip rows; the
+  contiguous rule keeps that safety — any gap leaves the cursor for the poll to fill — and removes the
+  redundant second parse in the common case.
+* **The cached feed is written in 256 KB slices instead of 32 KB.** One shared buffer, so no extra
+  memory per reader, and eight times fewer write/drain cycles per 10 MB feed on the balancer's CPU.
+
+Standing at the time of writing, from the last completed graded run: **2nd on the static board, 6th on
+the breakpoint board**, 100 % message completeness and 100/100 content correctness on both. A run with
+the three changes above deployed is queued; the report will not wait for it, but the repository's
+history will show its result.
+
+<div class="pagebreak"></div>
 
 ## 15. Analysis and Discussion
 
@@ -1225,14 +1296,20 @@ shared virtual IP would remove the last single point of failure.
    the sender to an allowlist, so anything with leading or trailing whitespace came back changed and
    scored as mangled. It survived because the suites checked that a message came back, not that it
    came back unchanged (§14.6).
-10. **A rolling restart silently moved the public routes to a different room**, which looks exactly
+10. **The balancer was OOM-killed mid-run and nothing restarted it.** One kill took the only URL
+    clients have down until a human noticed. It is supervised now, and the cache's memory is bounded
+    by counting live buffers rather than readers — the first attempt counted readers, over-counted a
+    hundredfold, and broke a stage on its own (§6.6, §14.8).
+11. **A cache ceiling set while fixing that was too low by half**, and cost 53 % of feed reads in
+    the next graded run (§14.8). Set from a measured full-ladder size now, not a guess.
+12. **A rolling restart silently moved the public routes to a different room**, which looks exactly
    like the database having lost every message. The deploy script now inherits the room the running
    deployment is already serving unless one is given explicitly.
-11. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
+13. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
     user-local Node 22 tree was copied from sys1 over SSH; the system Node is untouched.
-12. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public
+14. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public
     port, so the sys4 backend listens on 3001 on the private network.
-13. **The evaluation generator's request format is unspecified.** `/message` accepts JSON,
+15. **The evaluation generator's request format is unspecified.** `/message` accepts JSON,
     form-encoded bodies, raw text and query parameters, `GET` as well as `POST`, and eight spellings of
     each field name.
 
@@ -1268,7 +1345,9 @@ mean of 351 ms**, and holds the breakpoint ladder to **2 500 concurrent users** 
 requests, where it previously broke at 2 000 having served 22 907. **Message completeness is 100 % on
 both boards** — the metric both of them sort on first, and the one this report originally argued was
 unreachable, and the one change in the project that cost performance rather than buying it. On the
-course leaderboard, which ranks these two ladders across the class, the system finished 1st and 4th.
+course leaderboard, which ranks these two ladders across the class, the system has placed as high as
+1st and 4th; at the time of writing the last completed run stands 2nd and 6th, and the work of §14.8 —
+found by profiling all four systems under the evaluation's own load — is deployed against the gap.
 
 One defect was still open when those runs were recorded and has since been fixed: content correctness
 scored 94 to 97 out of 100 because `/message` was trimming whitespace off message bodies and filtering

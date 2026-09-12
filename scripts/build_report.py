@@ -116,6 +116,11 @@ repl = {
         "same load and same cluster."),
     "{{T_LBSTEPS}}": table("leaderboard_steps.md"),
     "{{T_GRADED}}": table("graded_stages.md"),
+    "{{T_GRADED_UTIL}}": table("graded_utilisation.md"),
+    "{{C_GRADED_UTIL}}": chart("graded_utilisation.png",
+        "Figure 11 — CPU and memory of all four systems, sampled once a second from each container's "
+        "cgroup, while the course's own load generator ran both ladders against the public URL. "
+        "100 % is one whole CPU, each container's quota; 512 MB is its memory limit."),
     "{{C_GRADED}}": chart("graded_stages.png",
         "Figure 9 — The graded leaderboard runs, per stage. Left: breakpoint throughput before and "
         "after admission control and the shared feed cache — flat where it used to collapse. Centre: "
