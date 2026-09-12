@@ -42,5 +42,12 @@ printf '   POST /message     : '; curl -sS -m 20 -o /dev/null -w 'HTTP %{http_co
 for h in lbsys1 lbsys2 lbsys3 lbsys4; do
   printf '   %-7s memory    : ' "$h"; ssh -o BatchMode=yes "$h" 'echo "$(( $(cat /sys/fs/cgroup/memory.current)/1048576 )) MB of 512  ($(grep -o "oom_kill [0-9]*" /sys/fs/cgroup/memory.events))"'
 done
+# sys1 has the least headroom of the four and the balancer's growth over a full ladder
+# is ~200 MB. A run was lost to a 171 MB unrelated process sharing that container:
+# the balancer started at 302 MB and was killed at 2 000 users. Anything over 30 MB
+# on sys1 that is not the balancer is reported here, not killed — that is a decision.
+echo "== 4. what else is holding memory on sys1 (anything but the balancer over 30 MB) =="
+other=$(ssh -o BatchMode=yes lbsys1 'ps -eo rss,args --sort=-rss | awk "NR>1 && \$1>30000 && \$0 !~ /lb\/loadbalancer/ && \$0 !~ /supervise/ {printf \"   %4d MB  %s\\n\", \$1/1024, substr(\$0,index(\$0,\$2),70)}"')
+if [ -n "$other" ]; then echo "$other"; echo "   WARNING: the balancer will have less than ~250 MB to grow into. Stop these before a run."; fail=1; else echo "   none — the balancer has the container"; fi
 echo
 if [ "$fail" = 0 ]; then echo "READY — submit http://10.1.75.53:3269 now."; else echo "NOT READY — fix the lines above first."; exit 1; fi
