@@ -123,8 +123,12 @@ DEFAULTS = {
     # mid-run. Above this ceiling the feed is proxied instead — streamed in chunks,
     # never held whole — which costs throughput rather than costing the balancer its
     # life. `feed_cache_generation_budget` bounds the total instead of one copy.
-    "feed_cache_max_bytes": 8388608,
-    "feed_cache_generation_budget": 67108864,
+    # 16 MB: a full 40 000-message ladder measured ~10.3 MB gzipped. The previous
+    # 8 MB ceiling was crossed at the 750-user stage of a graded run; from there every
+    # feed read fell to the 8-slot proxied path and 4 613 of them returned 502.
+    "feed_cache_max_bytes": 16777216,
+    # 32 MB: two 16 MB generations. sys1 peaked at 501 MB of 512 during that run.
+    "feed_cache_generation_budget": 33554432,
     "feed_quiet_ms": 400,            # idle for this long -> proxy, do not cache
     "feed_stale_max_ms": 3000,       # never serve a cached feed older than this
     "access_log": "logs/lb_access.csv",
@@ -957,7 +961,11 @@ HOP_BY_HOP = {b"connection", b"keep-alive", b"proxy-authenticate", b"proxy-autho
 # (memory.events reported oom_kill, peak 542 MB). 64 KB is still far larger than a
 # TCP segment, and it bounds the worst case at a few tens of megabytes.
 IO_BUF = 16384           # stream-reader limit: paid for on EVERY connection
-RELAY_CHUNK = 32768      # body copy granularity
+RELAY_CHUNK = 32768      # body copy granularity on the proxied path
+# The cached feed is one shared buffer, so a bigger slice costs no extra memory per
+# reader (the transport's write high-water mark still bounds what is queued), and
+# it cuts the write/drain cycles per 10 MB feed from ~320 to ~40 on a single CPU.
+CACHE_CHUNK = 262144
 WRITE_HWM = 32768        # per-connection write buffer before backpressure applies
 # Idle keep-alive connections kept per backend. Too small is not a memory saving,
 # it is connection churn: at a thousand concurrent clients the balancer needs
@@ -1214,8 +1222,8 @@ async def handle_client(creader, cwriter):
                 # proxied path. `take`/`done` bound the other half of it: how many
                 # whole bodies the balancer is holding at once.
                 try:
-                    for off in range(0, len(body_out), RELAY_CHUNK):
-                        cwriter.write(body_out[off:off + RELAY_CHUNK])
+                    for off in range(0, len(body_out), CACHE_CHUNK):
+                        cwriter.write(body_out[off:off + CACHE_CHUNK])
                         await cwriter.drain()
                 finally:
                     FEED_CACHE.done(body_out)

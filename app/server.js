@@ -498,18 +498,33 @@ let dbWS = null, dbWSUp = false;
 function connectFirehose() {
   dbWS = new WebSocket(DB_URL.replace(/^http/, 'ws') + '/subscribe');
   dbWS.on('open', () => { dbWSUp = true; log('db firehose connected'); if (feedReady) feedLoad(true); });
+  // One message from the database firehose. The broadcast makes the feed current
+  // immediately; the poll is what makes it correct: anything the broadcast drops, the
+  // next poll picks up, and anything the poll returns twice, the id set drops.
+  //
+  // The poll cursor is advanced from here ONLY when the message is the very next
+  // sequence number — contiguous, no gap. It used to never advance from the firehose
+  // (an earlier version let it jump ahead and rows were skipped), which meant every
+  // poll re-fetched rows this backend had already been handed, and the database
+  // serialised every message three more times, once per backend. With the contiguous
+  // rule the poll returns nothing in the common case, and a gap — a dropped or
+  // reordered frame — leaves the cursor where it is so the poll fills it exactly as
+  // before. The safety is kept; the redundant work is not.
+  function onFirehoseEntry(room, entry) {
+    if (!entry || !entry.id) return;
+    remember(entry.id, { seq: entry.seq, id: entry.id });
+    if (room === PUBLIC_ROOM) {
+      feedAppend(entry);
+      if (feedReady && entry.seq === feedPollSeq + 1) feedPollSeq = entry.seq;
+    }
+    deliverLocal(room, entry);
+  }
   dbWS.on('message', data => {
     try {
       const ev = JSON.parse(data);
-      if (ev.type === 'msg') {
-        if (ev.entry && ev.entry.id) remember(ev.entry.id, { seq: ev.entry.seq, id: ev.entry.id });
-        // The broadcast makes the feed current immediately; the poll below is what
-        // makes it correct. Anything the broadcast drops the next poll picks up,
-        // and anything the poll returns twice is dropped by the id set.
-        if (ev.room === PUBLIC_ROOM) feedAppend(ev.entry);
-        deliverLocal(ev.room, ev.entry);
-      }
-      if (ev.type === 'room') broadcastAll({ type: 'room', room: ev.room });
+      if (ev.type === 'msg') onFirehoseEntry(ev.room, ev.entry);
+      else if (ev.type === 'batch') { for (const e of ev.entries || []) onFirehoseEntry(ev.room, e); }
+      else if (ev.type === 'room') broadcastAll({ type: 'room', room: ev.room });
     } catch (e) {}
   });
   const retry = () => { dbWSUp = false; setTimeout(connectFirehose, 2000); };

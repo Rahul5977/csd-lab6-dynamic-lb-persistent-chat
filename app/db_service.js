@@ -219,6 +219,22 @@ function flushAppends() {
   }
   stats.batches++;
   stats.batch_max = Math.max(stats.batch_max, batch.length);
+  // One firehose frame per committed batch, per room. Broadcasting per message cost
+  // this single-threaded process a JSON.stringify and three WebSocket sends for every
+  // row while it was the busiest thing on a shared one-CPU container; under load a
+  // batch is ~10 rows, so this is roughly a tenfold cut in that work. Every backend
+  // still receives every message, and the smoke suite's cross-backend read-after-write
+  // assertions are what guard that.
+  const byRoom = new Map();
+  for (const o of out) {
+    if (o.err || o.res.duplicate) continue;
+    if (!byRoom.has(o.job.room)) byRoom.set(o.job.room, []);
+    byRoom.get(o.job.room).push(o.res.rec);
+  }
+  for (const [room, entries] of byRoom) {
+    if (entries.length === 1) broadcast({ type: 'msg', room, entry: entries[0] });
+    else broadcast({ type: 'batch', room, entries });
+  }
   for (const o of out) {
     if (o.err) o.job.reject(o.err);
     else o.job.resolve(o.res);
@@ -333,7 +349,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, duplicate: true, seq: out.rec.seq, id: out.rec.id });
       }
       stats.appended++;
-      broadcast({ type: 'msg', room, entry: out.rec });
+      // The firehose frame for this message went out with its commit batch (see
+      // flushAppends): one frame per transaction, not one per message.
       return json(res, 200, { ok: true, duplicate: false, seq: out.rec.seq, id: out.rec.id });
     }
     if (u.pathname === '/messages/count' && req.method === 'GET') {
