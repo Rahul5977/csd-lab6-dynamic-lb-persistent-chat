@@ -1,0 +1,20 @@
+=== THRESHOLD-BASED DYNAMIC SELECTION (live, 2026-09-12T13:59:31Z) ===
+T = 0.15;  load_index = max(cgroup cpu, in_flight/inflight_cap, ewma/rt_cap)
+
+  LIGHT LOAD  (1 user): load stays under T
+    load_index mid-burst: {'sys2': 0.083, 'sys3': 0.083, 'sys4': 0.083}   (threshold T=0.15)
+    distribution: {'sys2': 38, 'sys3': 1, 'sys4': 1}   failed=0   49 req/s
+    backends over T: none -> stay on current backend
+
+  HEAVY LOAD (60 users): load crosses T
+    load_index mid-burst: {'sys2': 0.286, 'sys3': 0.484, 'sys4': 0.399}   (threshold T=0.15)
+    distribution: {'sys2': 537, 'sys4': 461, 'sys3': 502}   failed=0   495 req/s
+    backends over T: ['sys2', 'sys3', 'sys4'] -> SWITCHING
+
+  switch counter: 51308
+  recent switch events:
+    switch sys3 - threshold 0.15 exceeded on sys2
+    switch sys3 - threshold 0.15 exceeded on sys2
+    switch sys4 - threshold 0.15 exceeded on sys3
+    switch sys2 - threshold 0.15 exceeded on sys4
+    switch sys4 - threshold 0.15 exceeded on sys2

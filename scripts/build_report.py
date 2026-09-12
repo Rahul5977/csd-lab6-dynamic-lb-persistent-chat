@@ -82,6 +82,7 @@ repl = {
     "{{DATE}}": datetime.date.today().strftime("%d %B %Y"),
     "{{LB_CODE}}": "\x00LBCODE\x00",
     "{{LB_CODE2}}": "\x00LBCODE2\x00",
+    "{{LB_CODE3}}": "\x00LBCODE3\x00",
     "{{DB_CODE}}": "\x00DBCODE\x00",
     "{{T_DEDUP}}": table("dedup.md"),
     "{{C_SCALE}}": chart("scaling_timeline.png", "Figure 8 — Backends admitted while the application was running: throughput, response time, active backends and per-backend share; dashed lines = a backend added."),
@@ -114,6 +115,12 @@ repl = {
         "Figure 7 — The threshold rule against round robin, least connections and the adaptive score, "
         "same load and same cluster."),
     "{{T_LBSTEPS}}": table("leaderboard_steps.md"),
+    "{{T_GRADED}}": table("graded_stages.md"),
+    "{{C_GRADED}}": chart("graded_stages.png",
+        "Figure 9 — The graded leaderboard runs, per stage. Left: breakpoint throughput before and "
+        "after admission control and the shared feed cache — flat where it used to collapse. Centre: "
+        "the error rate that ends a run at 20 %. Right: the static board, 20 000 of 20 000 requests "
+        "with zero errors."),
     "{{T_LADDERS}}": table("leaderboard_ladders.md"),
     "{{C_LBSTEPS}}": chart("leaderboard_steps.png",
         "Figure 10 — What each change was worth at 1 000 concurrent users."),
@@ -143,6 +150,9 @@ body = body.replace("\x00LBCODE\x00",
 body = body.replace("\x00LBCODE2\x00",
                     code_block("lb/loadbalancer.py", PythonLexer(), *span("lb/loadbalancer.py",
                                "def _pick_threshold(self, pool)", "def pick_sticky(self")))  # the threshold rule
+body = body.replace("\x00LBCODE3\x00",
+                    code_block("lb/loadbalancer.py", PythonLexer(), *span("lb/loadbalancer.py",
+                               "    async def acquire(self):", "    def snapshot(self):")))   # the bulkhead
 body = body.replace("\x00DBCODE\x00",
                     code_block("app/db_service.js", JavascriptLexer(), *span("app/db_service.js",
                                "function appendOne(room, entry)", "// ── One-time migration")))

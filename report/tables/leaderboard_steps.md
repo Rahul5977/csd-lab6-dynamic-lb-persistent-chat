@@ -1,4 +1,6 @@
 Each change measured on its own, 1 000 concurrent users, 8 000 requests, same cluster and same client.
+These three are all on the `/message` path, so they were measured with write-heavy traffic; the feed
+work that dominates the evaluation's actual mix is measured separately in §14.4 and §14.6.
 
 | change | what it does | throughput (req/s) | mean response (ms) | errors |
 |---|---|---|---|---|

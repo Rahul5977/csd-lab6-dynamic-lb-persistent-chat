@@ -1,0 +1,15 @@
+=== DATABASE INTEGRITY ON THE LIVE FILE (2026-09-12T14:09:32Z) ===
+  messages                   1,827,339
+  users / rooms              724 / 31
+  database file              514 MB  (sqlite (node:sqlite, WAL))
+  duplicates rejected total  28148
+  appends per commit         9.82  (biggest batch 157)
+  uptime                     25145 s   node v22.23.2
+
+--- the decisive check, run against the SQLite file itself ---
+  SELECT id, COUNT(*) FROM messages GROUP BY id HAVING COUNT(*) > 1  ->  0 rows
+  total rows      1,827,339
+  distinct ids    1,827,339
+  verdict         every message id is unique
+(node:243900) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)

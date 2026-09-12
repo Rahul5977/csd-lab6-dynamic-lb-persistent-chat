@@ -1,0 +1,19 @@
+=== UNIQUE MESSAGE IDs AND DUPLICATE PREVENTION (live, 2026-09-12T14:04:06Z) ===
+
+--- the same message id sent three times (retry / reconnect) ---
+    id = viva-dup-1789221846
+    attempt 1: backend=sys3  duplicate=False seq=57812 caught_by=-
+    attempt 2: backend=sys4  duplicate=True  seq=57812 caught_by=backend-lru
+    attempt 3: backend=sys2  duplicate=True  seq=57812 caught_by=backend-lru
+
+--- the same id sent to a DIFFERENT backend (cross-node dedup) ---
+    attempt 4: backend=sys3  duplicate=True  seq=57812
+    attempt 5: backend=sys2  duplicate=True  seq=57812
+
+--- server-minted ids are unique (no id supplied) ---
+    12 posts -> 12 distinct ids
+    sample: ['sys3-60e9824b-1', 'sys4-3b723717-1', 'sys3-60e9824b-2']
+
+--- /feed ---
+    occurrences of viva-dup-1789221846: 1   (must be exactly 1)
+    rows=45013  distinct ids=45013  -> NO DUPLICATES

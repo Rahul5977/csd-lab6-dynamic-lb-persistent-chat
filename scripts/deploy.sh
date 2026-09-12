@@ -32,6 +32,18 @@ DB_SYS="${DB_SYS:-sys3}"
 # generators left in the original `public` room. Pointing the routes at a fresh
 # room empties the feed without deleting a single row: everything written before
 # is still in the database and still reachable through the chat API.
+# The room the public /message and /feed routes act on. If it is not given
+# explicitly, inherit whatever the running deployment is already serving: a plain
+# `deploy.sh backends` used to silently move the public routes to the default room,
+# which looks exactly like "the database lost my messages" and would quietly wreck
+# an evaluation run that overlapped the restart.
+if [ -z "${PUBLIC_ROOM:-}" ]; then
+  for _h in lbsys2 lbsys3 lbsys4; do
+    PUBLIC_ROOM="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$_h" \
+        'sed -n "s/^PUBLIC_ROOM=//p" ~/assignment6/.env' 2>/dev/null | head -1)"
+    [ -n "$PUBLIC_ROOM" ] && break
+  done
+fi
 PUBLIC_ROOM="${PUBLIC_ROOM:-room}"
 LB_PORT=3000                            # container port behind public 10.1.75.53:3269
 NODE22="v22.23.2"

@@ -1,0 +1,49 @@
+=== BACKEND FAILURE DETECTION AND RECOVERY (live, 2026-09-12T13:58:34Z) ===
+
+--- before: pool ---
+active = 3
+  sys2  UP        healthy=True
+  sys3  UP        healthy=True
+  sys4  UP        healthy=True
+
+--- killing the backend on sys4 (SIGKILL: no graceful deregister) ---
+  killed pid 297603
+
+--- traffic during the outage: 30 requests, none may fail ---
+  served by: {'sys2': 29, 'sys3': 1}   failed: 0
+
+--- pool after detection ---
+active = 3
+  sys2  UP        healthy=True
+  sys3  UP        healthy=True
+  sys4  UP        healthy=True
+events:
+   degraded sys3 probe 68 ms, cpu 100%
+   switch sys4 threshold 0.15 exceeded on sys3
+   switch sys2 threshold 0.15 exceeded on sys4
+   recovered sys3 probe 10 ms
+
+--- health probe marks it DOWN (probe interval 3 s, fail_threshold 2) ---
+active = 2
+  sys2  UP        healthy=True
+  sys3  UP        healthy=True
+  sys4  DOWN      healthy=False
+  ejection event: {'t': 1789221518.656, 'kind': 'ejected', 'backend': 'sys4', 'detail': '2 refused connections', 'active': 2}
+
+--- 20 more requests: the dead backend receives none ---
+  served by: {'sys2': 20}   failed: 0   sys4 share: 0
+
+--- DYNAMIC SCALING: bring sys4 back while the system is serving traffic ---
+== backend v3 -> sys4 (lbsys4, port 3001, advertise 172.17.0.73) ==
+   sys4 healthy ✔
+   sys4 routable again ✔
+
+--- the balancer readmits it on its own (discovery + rise_threshold) ---
+active = 3
+  sys2  UP        healthy=True  source=config
+  sys3  UP        healthy=True  source=scan
+  sys4  UP        healthy=True  source=scan
+  readmission event: {'t': 1789221548.893, 'kind': 'readmitted', 'backend': 'sys4', 'detail': 'probe 11 ms', 'active': 3}
+
+--- traffic spreads across all three again ---
+  served by: {'sys2': 57, 'sys3': 2, 'sys4': 1}   failed: 0
