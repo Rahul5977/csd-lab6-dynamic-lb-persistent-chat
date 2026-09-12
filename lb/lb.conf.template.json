@@ -45,10 +45,11 @@
   "passive_fail_threshold": 4,
   "feed_cache_path": "/feed",
   "feed_cache_ms": 1000,
-  "feed_cache_max_bytes": 25165824,
+  "feed_cache_max_bytes": 8388608,
   "backend_slots": 56,
   "feed_slots": 8,
   "admission_enabled": true,
   "feed_quiet_ms": 400,
-  "feed_stale_max_ms": 3000
+  "feed_stale_max_ms": 3000,
+  "feed_cache_generation_budget": 67108864
 }

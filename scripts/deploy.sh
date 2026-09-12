@@ -180,7 +180,7 @@ EOF
     pkill -f '^python3 lb/loadbalancer' 2>/dev/null || true       # ours (v2) AND Lab 5's v1 on port $LB_PORT
     tmux kill-session -t lb 2>/dev/null || true                    # Lab 5's tmux session (restored by rollback_lab5.sh)
     for i in 1 2 3 4 5 6; do ss -tln | grep -q ':$LB_PORT ' || break; sleep 1; done
-    tmux new-session -d -s lb6 'cd $REMOTE_DIR && ulimit -n 65536 && python3 lb/loadbalancer.py lb/lb.conf.json >> lb.log 2>&1'
+    tmux new-session -d -s lb6 'cd $REMOTE_DIR && bash lb/supervise.sh'
   "
   wait_ok lbsys1 "http://127.0.0.1:$LB_PORT/lb/health" "lb" || { ssh lbsys1 "tail -20 $REMOTE_DIR/lb.log"; return 1; }
 }

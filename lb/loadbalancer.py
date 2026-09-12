@@ -115,11 +115,16 @@ DEFAULTS = {
     # the body in chunks and never holds a whole copy, so a feed that has grown
     # past what this container can safely keep in memory costs throughput rather
     # than costing the balancer its life — it was killed twice learning that.
-    # The evaluation's feed grows to tens of megabytes over a full ladder, so the
-    # ceiling has to be above it or the cache silently stops working — which is
-    # exactly what happened: it had been dead for fifteen hours because an 8.8 MB
-    # feed was over the old 2 MB limit.
-    "feed_cache_max_bytes": 25165824,
+    # The limit is not "how big a feed can we hold once", it is "how big a feed can we
+    # hold SEVERAL of". Every revalidation makes a new copy, and a reader that is
+    # part-way through the previous one keeps it alive, so under load the balancer
+    # holds as many generations as there are slow readers spanning a refresh. At
+    # 10 MB a generation that reached 512 MB and the kernel killed the process
+    # mid-run. Above this ceiling the feed is proxied instead — streamed in chunks,
+    # never held whole — which costs throughput rather than costing the balancer its
+    # life. `feed_cache_generation_budget` bounds the total instead of one copy.
+    "feed_cache_max_bytes": 8388608,
+    "feed_cache_generation_budget": 67108864,
     "feed_quiet_ms": 400,            # idle for this long -> proxy, do not cache
     "feed_stale_max_ms": 3000,       # never serve a cached feed older than this
     "access_log": "logs/lb_access.csv",
@@ -598,33 +603,75 @@ class FeedCache:
         self.revalidating = None  # in-flight revalidation, shared by every waiter
         self.revalidations = 0
         self.stale_serves = 0
+        self.live = {}            # id(body) -> [body, readers] for generations in flight
+        self.over_budget = 0      # readers sent to a backend because the budget was full
 
     def fresh(self, max_age_ms):
         return self.body is not None and (time.time() - self.at) * 1000 < max_age_ms
 
-    def variant(self, accepts_gzip):
-        """The decoded copy is built on demand and not kept alongside the encoded
-        one. Every client the evaluation uses offers gzip, so holding a second copy
-        of a twenty-megabyte feed would cost the balancer its memory to serve a
-        case that never arrives. Built once per refresh when someone does ask."""
-        if accepts_gzip:
-            return self.body
-        if self.plain is not None or self.body is None:
-            return self.plain
-        head, sep, payload = self.body.partition(b"\r\n\r\n")
-        if not sep or b"content-encoding: gzip" not in head.lower():
-            self.plain = self.body
-            return self.plain
-        try:
-            raw = zlib.decompress(payload, 16 + zlib.MAX_WBITS)
-        except zlib.error:
+    def take(self, accepts_gzip, budget):
+        """Reserve the cached body for streaming to one client, or return None if
+        admitting it would pin more memory than the balancer can afford.
+
+        This is the bound that was missing. Every revalidation allocates a new copy of
+        the feed, and a client still streaming the previous one keeps that copy alive,
+        so the number of live *generations* is however many slow readers span a
+        refresh. At ten megabytes each that reached the 512 MB container limit and the
+        kernel killed the process in the middle of an evaluation run.
+
+        What is counted is generations, not readers. A hundred clients streaming the
+        same buffer cost one buffer, not a hundred; charging each reader the full body
+        size over-counts by two orders of magnitude, and the first version of this did
+        exactly that — it refused 2 607 of 4 754 feed reads, pushed them onto the
+        backends, and broke a stage at 500 users that had previously held 2 500.
+
+        A reader that still cannot be admitted is not refused, it is proxied: the same
+        answer, streamed from a backend in chunks, holding nothing."""
+        b = self.body if accepts_gzip else None
+        if b is None:
             return None
-        keep = [l for l in head.split(b"\r\n")[1:]
-                if l.split(b":", 1)[0].strip().lower() not in
-                (b"content-length", b"content-encoding")]
-        self.plain = b"HTTP/1.1 200 OK\r\n" + b"\r\n".join(keep) + \
-            b"\r\nContent-Length: " + str(len(raw)).encode() + b"\r\n\r\n" + raw
-        return self.plain
+        key = id(b)
+        entry = self.live.get(key)
+        if entry is None and self.live and self.pinned_bytes() + len(b) > budget:
+            # Pinning one more generation would cost more memory than is available.
+            # Rather than send this reader to a backend — which is slow, occupies a
+            # feed slot for seconds and is exactly how the previous version broke a
+            # stage — hand it a generation that is ALREADY in memory. It is one
+            # refresh behind at worst, costs nothing, and staleness under load is not
+            # what the completeness check measures: that runs once the balancer is
+            # idle, and the idle path bypasses the cache entirely.
+            self.over_budget += 1
+            b = max(self.live.values(), key=lambda e: e[1])[0]
+            key = id(b)
+            entry = self.live.get(key)
+        if entry is None:
+            entry = self.live[key] = [b, 0]
+        entry[1] += 1
+        return b
+
+    def done(self, body):
+        entry = self.live.get(id(body))
+        if entry is None:
+            return
+        entry[1] -= 1
+        if entry[1] <= 0:
+            self.live.pop(id(body), None)
+
+    def pinned_bytes(self):
+        """Bytes held by generations currently being streamed. The dict keeps each
+        one alive, so the id() keys cannot be reused underneath us."""
+        return sum(len(b) for b, _ in self.live.values())
+
+    def variant(self, accepts_gzip):
+        """Only the encoded copy is ever held.
+
+        This used to decompress the cached body on demand for a client that had not
+        offered gzip, and keep that too. On a ten-megabyte compressed feed the decoded
+        copy is about twenty-four, held for the life of the generation, in a container
+        with 512 MB — and every client the load actually comes from offers gzip. A
+        client that does not is proxied to a backend instead, which streams and holds
+        nothing."""
+        return self.body if accepts_gzip else None
 
     async def ensure_fresh(self):
         """Revalidate at serve time, not on a timer, with one request in flight
@@ -727,7 +774,7 @@ class FeedCache:
             b"X-LB-Feed-Cache: hit\r\nConnection: keep-alive\r\n\r\n" + payload
         with self.lock:
             self.body = body
-            self.plain = None if gzipped else body   # built on demand, see variant()
+            self.plain = None if gzipped else body
             self.etag = etag
             self.at = time.time()
             self.backend = backend_id
@@ -1147,22 +1194,31 @@ async def handle_client(creader, cwriter):
                 # twice: confirmed-current bytes are served from one shared buffer
                 # here, and the backends go back to serving messages.
                 if await FEED_CACHE.ensure_fresh():
-                    body_out = FEED_CACHE.variant(accepts_gzip)
-                if body_out is not None and FEED_CACHE.etag \
-                        and hmap.get(b"if-none-match") == FEED_CACHE.etag:
-                    body_out = (b"HTTP/1.1 304 Not Modified\r\nETag: " + FEED_CACHE.etag +
-                                b"\r\nX-LB-Feed-Cache: hit\r\n"
-                                b"Content-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+                    if FEED_CACHE.etag and hmap.get(b"if-none-match") == FEED_CACHE.etag:
+                        # Nothing pinned: a 304 carries no body at all.
+                        not_modified = (b"HTTP/1.1 304 Not Modified\r\nETag: " +
+                                        FEED_CACHE.etag + b"\r\nX-LB-Feed-Cache: hit\r\n"
+                                        b"Content-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+                        cwriter.write(not_modified)
+                        await cwriter.drain()
+                        FEED_CACHE.hits += 1
+                        LB_STATE.log(client_ip, "GET", fp, "cache", 0.0, 304, 0)
+                        continue
+                    body_out = FEED_CACHE.take(
+                        accepts_gzip, int(cfg.get("feed_cache_generation_budget", 67108864)))
             if body_out is not None:
                 # In chunks, draining between them. A single write() of a
                 # megabyte-and-a-half queues the whole body in the transport, and a
                 # thousand readers doing that at once is more memory than this
-                # container has — which is exactly how the balancer was killed
-                # mid-evaluation. Backpressure has to apply here as it does on the
-                # proxied path.
-                for off in range(0, len(body_out), RELAY_CHUNK):
-                    cwriter.write(body_out[off:off + RELAY_CHUNK])
-                    await cwriter.drain()
+                # container has. Backpressure has to apply here as it does on the
+                # proxied path. `take`/`done` bound the other half of it: how many
+                # whole bodies the balancer is holding at once.
+                try:
+                    for off in range(0, len(body_out), RELAY_CHUNK):
+                        cwriter.write(body_out[off:off + RELAY_CHUNK])
+                        await cwriter.drain()
+                finally:
+                    FEED_CACHE.done(body_out)
                 FEED_CACHE.hits += 1
                 LB_STATE.log(client_ip, "GET", fp, "cache", 0.0, 200, len(body_out))
                 continue
@@ -1301,7 +1357,11 @@ def stats_dict():
                       "backend_slots": lb.cfg.get("backend_slots"),
                       "request": REQ_GATE.snapshot(), "feed": FEED_GATE.snapshot()},
         "feed_cache_detail": {"revalidations": FEED_CACHE.revalidations,
-                              "stale_serves": FEED_CACHE.stale_serves},
+                              "stale_serves": FEED_CACHE.stale_serves,
+                              "pinned_bytes": FEED_CACHE.pinned_bytes(),
+                              "live_generations": len(FEED_CACHE.live),
+                              "budget_bytes": lb.cfg.get("feed_cache_generation_budget"),
+                              "proxied_over_budget": FEED_CACHE.over_budget},
         "candidates": lb.cfg["discovery"].get("candidates", []),
         "recent_events": list(lb.events)[-10:],
     }

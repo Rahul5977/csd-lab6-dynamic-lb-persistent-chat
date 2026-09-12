@@ -1,0 +1,41 @@
+{
+ "run_id": "SIM_breakpoint_1789227764",
+ "board": "breakpoint",
+ "url": "http://10.1.75.53:3269",
+ "stages": [
+  {
+   "concurrency": 200,
+   "budget": 5000,
+   "requests": 5200,
+   "successes": 5200,
+   "errors": 0,
+   "timeouts": 0,
+   "err_rate": 0.0,
+   "mean_ms": 604.07,
+   "rps": 305.99
+  },
+  {
+   "concurrency": 350,
+   "budget": 5000,
+   "requests": 4995,
+   "successes": 3891,
+   "errors": 1104,
+   "timeouts": 1103,
+   "err_rate": 0.22102,
+   "mean_ms": 901.84,
+   "rps": 86.75
+  }
+ ],
+ "mean_response_ms": 731.52,
+ "total_requests": 10195,
+ "total_successes": 9091,
+ "total_errors": 1104,
+ "err_rate_overall": 0.10829,
+ "peak_rps": 305.99,
+ "break_concurrency": 350,
+ "accepted_msgs": 7247,
+ "delivered": 7247,
+ "lost": 0,
+ "completeness": 1.0,
+ "integrity_note": "/feed returned 7247 of 7247 messages in the room"
+}

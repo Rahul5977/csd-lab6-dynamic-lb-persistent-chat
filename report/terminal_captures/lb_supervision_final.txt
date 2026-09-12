@@ -1,0 +1,14 @@
+=== THE BALANCER SURVIVES BEING KILLED (2026-09-12T15:37:36Z) ===
+Simulating what the kernel's OOM killer does: SIGKILL, no chance to clean up.
+
+  balancer pid before : 706416
+  SIGKILLed.
+  restarted after ~1s, new pid: 706434
+
+  serving again:
+
+    POST /message -> 200
+    active backends: 3
+
+  what the log recorded:
+    [lb] EXITED rc=137 at 2026-09-12T15:37:36Z — oom_kill 6 — restarting
