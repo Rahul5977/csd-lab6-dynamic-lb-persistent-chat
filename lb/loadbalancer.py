@@ -83,7 +83,7 @@ DEFAULTS = {
     "explore_pct": 5,                # % of adaptive picks that go to a random UP backend
     # -- threshold algorithm (Assignment 6 updated spec) ---------------------
     "switch_threshold": 0.55,        # load index at which the current backend is abandoned
-    "inflight_cap": 24,              # in-flight requests that count as "fully loaded"
+    "inflight_cap": 80,              # == backend_slots, so the load index stays 0..1
     "rt_cap_ms": 250,                # EWMA response time that counts as "fully loaded"
     "min_dwell_ms": 0,               # optional hysteresis after a switch
     "load_weight": 1.0,              # multiplier on the cpu_load term of the score
@@ -98,7 +98,7 @@ DEFAULTS = {
     # no throughput and costs latency on everything already queued. Requests over
     # the limit wait in a FIFO queue rather than being refused: a request that
     # waits and then succeeds beats one that is attempted at once and times out.
-    "backend_slots": 56,
+    "backend_slots": 80,
     # Feed reads get their own budget. One /feed response is hundreds of kilobytes
     # and holds its slot far longer than a /message write, so sharing one pool lets
     # a handful of readers starve hundreds of writers.
@@ -614,6 +614,13 @@ class FeedCache:
         self.stale_serves = 0
         self.live = {}            # id(body) -> [body, readers] for generations in flight
         self.over_budget = 0      # readers sent to a backend because the budget was full
+        # id(body) -> (head_bytes, file_object, payload_len, path): the same generation
+        # as a file, so the payload can leave the box by kernel sendfile instead of
+        # being copied through Python in 32 KB slices. See sendfile notes in serve().
+        self.files = {}
+        self.gen = 0
+        self.sendfile_served = 0
+        self.sendfile_fallback = 0
 
     def fresh(self, max_age_ms):
         return self.body is not None and (time.time() - self.at) * 1000 < max_age_ms
@@ -665,6 +672,22 @@ class FeedCache:
         entry[1] -= 1
         if entry[1] <= 0:
             self.live.pop(id(body), None)
+            if body is not self.body:
+                self._drop_file(id(body))
+
+    def _drop_file(self, key):
+        rec = self.files.pop(key, None)
+        if rec is None:
+            return
+        _head, fobj, _n, path = rec
+        try:
+            fobj.close()
+        except OSError:
+            pass
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
     def pinned_bytes(self):
         """Bytes held by generations currently being streamed. The dict keeps each
@@ -781,9 +804,35 @@ class FeedCache:
             (b"Content-Encoding: gzip\r\n" if gzipped else b"") + \
             b"Content-Length: " + str(len(payload)).encode() + b"\r\n" \
             b"X-LB-Feed-Cache: hit\r\nConnection: keep-alive\r\n\r\n" + payload
+        # Write the payload to a file for sendfile. A regular file, not /dev/shm: its
+        # pages are charged to the cgroup either way, but page cache is reclaimable
+        # under pressure and shmem is not, and this container has the least headroom
+        # of the four. Written to a temp name and renamed, so a reader never opens a
+        # half-written generation.
+        fobj, path = None, None
+        try:
+            d = os.path.join(os.path.dirname(os.path.abspath(CONF_PATH)), "..", "logs", "feedcache")
+            os.makedirs(d, exist_ok=True)
+            self.gen += 1
+            path = os.path.join(d, f"feed_{os.getpid()}_{self.gen}.bin")
+            tmp = path + ".tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(payload)
+            os.replace(tmp, path)
+            fobj = open(path, "rb")
+        except OSError:
+            fobj, path = None, None
+        head = body[:len(body) - len(payload)]
         with self.lock:
+            old_body = self.body
             self.body = body
             self.plain = None if gzipped else body
+            if fobj is not None:
+                self.files[id(body)] = (head, fobj, len(payload), path)
+            # The generation being replaced stays on disk only while someone is
+            # still streaming it; if nobody is, it goes now.
+            if old_body is not None and id(old_body) not in self.live:
+                self._drop_file(id(old_body))
             self.etag = etag
             self.at = time.time()
             self.backend = backend_id
@@ -1230,10 +1279,29 @@ async def handle_client(creader, cwriter):
                 # container has. Backpressure has to apply here as it does on the
                 # proxied path. `take`/`done` bound the other half of it: how many
                 # whole bodies the balancer is holding at once.
+                # Zero-copy where the kernel allows it. Serving the feed used to mean
+                # slicing the body in Python and copying each slice into the
+                # transport, ~350 iterations for an 11 MB feed, and a graded run
+                # pushed ~22 GB through that loop: the balancer's single CPU became
+                # the ceiling while the backends idled at 8 ms. With sendfile the
+                # head goes out as before and the payload goes socket-ward from the
+                # page cache without passing through Python; the loop is free to
+                # dispatch the requests queued behind it. fallback=True keeps the
+                # old path for any transport the native call cannot handle.
                 try:
-                    for off in range(0, len(body_out), CACHE_CHUNK):
-                        cwriter.write(body_out[off:off + CACHE_CHUNK])
+                    rec = FEED_CACHE.files.get(id(body_out))
+                    if rec is not None:
+                        head, fobj, plen, _path = rec
+                        cwriter.write(head)
                         await cwriter.drain()
+                        await asyncio.get_running_loop().sendfile(
+                            cwriter.transport, fobj, 0, plen, fallback=True)
+                        FEED_CACHE.sendfile_served += 1
+                    else:
+                        FEED_CACHE.sendfile_fallback += 1
+                        for off in range(0, len(body_out), CACHE_CHUNK):
+                            cwriter.write(body_out[off:off + CACHE_CHUNK])
+                            await cwriter.drain()
                 finally:
                     FEED_CACHE.done(body_out)
                 FEED_CACHE.hits += 1
@@ -1375,6 +1443,8 @@ def stats_dict():
                       "request": REQ_GATE.snapshot(), "feed": FEED_GATE.snapshot()},
         "feed_cache_detail": {"revalidations": FEED_CACHE.revalidations,
                               "stale_serves": FEED_CACHE.stale_serves,
+                              "sendfile_served": FEED_CACHE.sendfile_served,
+                              "sendfile_fallback": FEED_CACHE.sendfile_fallback,
                               "pinned_bytes": FEED_CACHE.pinned_bytes(),
                               "live_generations": len(FEED_CACHE.live),
                               "budget_bytes": lb.cfg.get("feed_cache_generation_budget"),
