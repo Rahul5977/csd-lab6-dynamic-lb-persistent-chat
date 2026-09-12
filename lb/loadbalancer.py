@@ -962,10 +962,14 @@ HOP_BY_HOP = {b"connection", b"keep-alive", b"proxy-authenticate", b"proxy-autho
 # TCP segment, and it bounds the worst case at a few tens of megabytes.
 IO_BUF = 16384           # stream-reader limit: paid for on EVERY connection
 RELAY_CHUNK = 32768      # body copy granularity on the proxied path
-# The cached feed is one shared buffer, so a bigger slice costs no extra memory per
-# reader (the transport's write high-water mark still bounds what is queued), and
-# it cuts the write/drain cycles per 10 MB feed from ~320 to ~40 on a single CPU.
-CACHE_CHUNK = 262144
+# The slice written per drain() on the cache path. This was raised to 256 KB on the
+# reasoning that the body is one shared buffer so a bigger slice costs no memory —
+# which is wrong about where the memory goes. transport.write() copies whatever the
+# socket cannot take immediately into a per-connection buffer BEFORE drain() can
+# apply back-pressure, so the slice size is the per-reader buffer, and 2 500 slow
+# readers × 256 KB is 640 MB on a 512 MB container. The kernel killed the balancer
+# three times inside one graded run. 32 KB, the value that had held, and no larger.
+CACHE_CHUNK = 32768
 WRITE_HWM = 32768        # per-connection write buffer before backpressure applies
 # Idle keep-alive connections kept per backend. Too small is not a memory saving,
 # it is connection churn: at a thousand concurrent clients the balancer needs

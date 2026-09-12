@@ -1176,13 +1176,22 @@ covered by the suites:
   cursor was kept separate deliberately, after an earlier version let it jump ahead and skip rows; the
   contiguous rule keeps that safety — any gap leaves the cursor for the poll to fill — and removes the
   redundant second parse in the common case.
-* **The cached feed is written in 256 KB slices instead of 32 KB.** One shared buffer, so no extra
-  memory per reader, and eight times fewer write/drain cycles per 10 MB feed on the balancer's CPU.
+A third change went out with those two and was wrong, and it is worth recording exactly. The cached
+feed was written in 256 KB slices instead of 32 KB, on the reasoning that the body is one shared
+buffer, so a bigger slice costs no memory per reader. That is wrong about *where* the memory goes:
+`transport.write()` copies whatever the socket cannot take immediately into a per-connection buffer
+before `drain()` can apply back-pressure, so the slice size *is* the per-reader buffer, and 2 500 slow
+readers × 256 KB is 640 MB on a 512 MB container. In the next graded run the kernel killed the
+balancer three times in two minutes. The supervisor brought it back within a second each time — that
+run placed 12th and 9th instead of 99th — but every kill dropped every in-flight connection, and
+those resets were the run's only errors: 0 timeouts, 6 402 connection failures. The slice is 32 KB
+again. It was a measured, reverted mistake, and the memory table above is why the reversion was
+immediate: sys1 has the least headroom of the four and the per-connection buffer is the multiplier.
 
-Standing at the time of writing, from the last completed graded run: **2nd on the static board, 6th on
-the breakpoint board**, 100 % message completeness and 100/100 content correctness on both. A run with
-the three changes above deployed is queued; the report will not wait for it, but the repository's
-history will show its result.
+Standing at the time of writing, from the last completed graded run *before* that mistake: **2nd on
+the static board, 6th on the breakpoint board**, 100 % message completeness and 100/100 content
+correctness on both. The two backend changes above are deployed, with the slice reverted, for the
+next run; the report will not wait for it, but the repository's history will show its result.
 
 <div class="pagebreak"></div>
 
@@ -1308,11 +1317,14 @@ shared virtual IP would remove the last single point of failure.
 12. **A rolling restart silently moved the public routes to a different room**, which looks exactly
    like the database having lost every message. The deploy script now inherits the room the running
    deployment is already serving unless one is given explicitly.
-13. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
+13. **A 256 KB write slice on the cache path OOM-killed the balancer three times in one graded
+    run.** The body is shared but the transport's per-connection buffer is not; the slice size is the
+    per-reader cost. Reverted the same hour (§14.8).
+14. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
     user-local Node 22 tree was copied from sys1 over SSH; the system Node is untouched.
-14. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public
+15. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public
     port, so the sys4 backend listens on 3001 on the private network.
-15. **The evaluation generator's request format is unspecified.** `/message` accepts JSON,
+16. **The evaluation generator's request format is unspecified.** `/message` accepts JSON,
     form-encoded bodies, raw text and query parameters, `GET` as well as `POST`, and eight spellings of
     each field name.
 
