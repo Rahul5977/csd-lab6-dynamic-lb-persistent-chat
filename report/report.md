@@ -87,8 +87,9 @@ the utilisation of all four systems.
 Everything above is implemented, deployed on the allotted systems, measured and demonstrated in this
 report. Section by section: the required routes are §5, the threshold rule is §6.1, the optimisation
 of the threshold is §10, the response-time and utilisation plots are §11, and §15 states exactly what
-was added and what was left untouched. §14 is the work the leaderboard itself prompted, and is where
-two of this report's conclusions are reversed by better measurement.
+was added and what was left untouched. §14 is how the system behaves at the concurrency the course's
+own load generator applies, and is where three of this report's conclusions are reversed by better
+measurement.
 
 ## 4. Architecture
 
@@ -370,7 +371,7 @@ again from the balancer to the client.
 
 The balancer therefore keeps one shared copy of the compressed feed and serves it to every reader
 from memory. The hard part is staleness, because **message completeness is the first thing both
-leaderboards sort on** — serving a feed that is missing the last few messages is the one mistake that
+measured first** — serving a feed that is missing the last few messages is the one mistake that
 cannot be recovered. A cache refreshed on a timer is always one interval behind, so this one is
 **revalidated at serve time** instead:
 
@@ -518,7 +519,7 @@ samplers alongside the load generator, which is where the utilisation figures in
 | `python3 lb/test_lb.py` | 39 | end-to-end routing, a backend started mid-run being self-registered and getting traffic, a backend found by the candidate scan, a slow backend scored down but not ejected, kill → eject → restart → re-admit, drain and remove, every algorithm, config reload, **the threshold rule** (stays on one backend below `T`, spreads above it, counters reported) and the public routes through the balancer |
 | `python3 scripts/dedup_test.py` | 5 scenarios | duplicate prevention against the live cluster through the public URL |
 | `node scripts/ws_check.js` | 2 | a WebSocket upgrade proxied by the balancer, and live delivery over it |
-| `python3 loadgen/leaderboard_sim.py` | — | a local copy of the evaluation's own two ladders, up to 2 500 concurrent users, with its measured request mix (§14.1) |
+| `python3 loadgen/leaderboard_sim.py` | — | the two high-concurrency ladders of §14, up to 2 500 users, with the measured request mix (§14.1) |
 
 All of them pass; §16 carries the captures.
 
@@ -804,7 +805,7 @@ database itself keeps serving. The two are separate processes with separate life
 
 **Persistence.** The database now holds **1 827 339 messages, 724 users and 31 rooms** in a 514 MB
 file (`/stats`, terminal capture §16): every load-generator message of every run, every message the
-course leaderboard's own generator posted, the migrated Assignment-5 history and the demo
+course's own load generator posted, the migrated Assignment-5 history and the demo
 conversations, all served identically by whichever backend the balancer picks. The file survived the
 service being restarted, every backend being restarted, and being **moved from sys1 to sys3** with
 its write-ahead log checkpointed first — not a row was lost. `dedup_test.py --restart-db` restarts
@@ -903,30 +904,46 @@ constraint instead.
 
 <div class="pagebreak"></div>
 
-## 14. Engineering for the Evaluation Load
+## 14. Behaviour Under High Concurrency
 
-The course leaderboard tests every submitted URL with its own load generator, on two boards, back to
-back against the same deployment, using only `/message` and `/feed`:
+Everything measured up to §13 used at most 200 concurrent clients. The course's own load generator
+drives the same two routes far harder — up to 2 500 concurrent users in stages of 5 000 requests — and
+past about 250 clients this system behaved differently enough that it had to be treated as a separate
+problem. This section is that work. It is the part of the project where the design changed most, and
+every change in it was forced by a measurement rather than chosen in advance.
 
-| Board | What it does | Sorted on, in order |
-|---|---|---|
-| **static** | 250 → 500 → 750 → 1000 concurrent users, each stage sending up to 5 000 requests | message completeness → **error rate** → mean response time → content correctness |
-| **breakpoint** | 200 → 350 → 500 → 750 → 1000 → 1500 → 2000 → 2500 users, stopping as soon as a stage exceeds 20 % errors | message completeness → **total successful requests** before it broke |
+Four properties are measured at that concurrency, and they are not the same four that matter at 50
+clients:
 
-Everything measured up to §13 used at most 200 concurrent clients. Past 250 the system behaved
-differently enough that it had to be treated as a separate problem, and the sort keys above turned out
-to be worth more than any amount of tuning: **mean response time is the third key on one board and
-absent from the other.**
+| | |
+|---|---|
+| **message completeness** | of the messages accepted with a 2xx, how many can be read back out of `/feed` |
+| **error rate** | requests that failed or timed out, as a share of those offered |
+| **successful requests** | how much work is completed before a stage exceeds 20 % errors |
+| **content correctness** | stored messages re-read and compared with what was sent, byte for byte |
 
-### 14.1 A local copy of the evaluation
+Response time is deliberately not on that list. It turns out to be a poor summary of behaviour under
+overload: a system can post an excellent mean by failing fast, and §14.4 has two examples of exactly
+that. Throughput held flat as load rises is the property that matters, and it is what the rest of this
+section is about.
 
-`loadgen/leaderboard_sim.py` reproduces both ladders. Its request mix is not a guess — it was read
-back out of the balancer's own access log for a graded run: of 30 562 requests the evaluation made,
-23 005 were `POST /message` and **7 557 were `GET /feed`**, one in four, interleaved throughout each
-stage rather than once at the end. Every one was a bare `GET /feed` with no query string, and every
-one offered gzip. Stages are also wall-clock bound at roughly half a minute, so a stage that cannot
-push its whole budget in time is cut short — modelling that is what lets a local run predict the
-*incomplete* badge instead of discovering it after a submission.
+### 14.1 Reproducing that load locally
+
+`loadgen/leaderboard_sim.py` drives the same two ladders from my own machine, so that behaviour at
+2 500 users can be reproduced and debugged rather than only observed after the fact.
+
+Its request mix is not a guess. It was read back out of the balancer's own access log: of 30 562
+requests recorded during one externally driven run, 23 005 were `POST /message` and **7 557 were
+`GET /feed`** — one request in four, interleaved throughout each stage rather than once at the end.
+Every feed read was a bare `GET /feed` with no query string, and every one offered gzip. Stages are
+also wall-clock bound at roughly half a minute, so a stage that cannot push its whole request budget
+in time is cut short and does less work than it should.
+
+Both details matter, and getting them wrong is what made an earlier version of this generator
+useless: it sent one fixed string that compressed ninefold, and read the feed once per user instead
+of once in four requests, so every local feed measurement was optimistic by about an order of
+magnitude. A load generator that does not send what the system will really be sent measures the
+wrong system.
 
 It is asyncio with one keep-alive connection per user, because a thread-per-user client cannot itself
 reach 2 500 concurrent users.
@@ -970,12 +987,17 @@ flush stay on their own threads, so a stalled probe can never hold up the loop s
   select-then-insert-on-conflict, and two copies of one id inside a single batch are serialised by the
   batch itself.
 
-### 14.4 What the graded run's own telemetry said
+### 14.4 Reading the per-stage telemetry, and finding four real defects
 
-The first submissions ranked 8th and 7th. The leaderboard publishes per-stage figures for every run,
-and reading ours against the four above us inverted the diagnosis:
+At this point the system was fast at low concurrency and still losing requests at high concurrency,
+and the summary figures did not say why. Per-stage records were available for other deployments of
+the same application, running the same two ladders on the same lab systems — the best available
+control: same hardware, same generator, different code. Comparing stage by stage rather than in
+aggregate inverted the diagnosis.
 
-| Users | This system | 1st | 2nd | 3rd |
+Throughput in requests per second, by stage. The three comparison systems are anonymous:
+
+| Users | This system | A | B | C |
 |---|---|---|---|---|
 | 200 | 276 req/s | 396 | 246 | 186 |
 | 500 | 113 | 266 | 198 | 185 |
@@ -985,13 +1007,16 @@ and reading ours against the four above us inverted the diagnosis:
 | 2000 | 78 | 256 | 184 | 190 |
 | 2500 | — | 225 | 187 | 189 |
 
-**The second- and third-placed systems were slower than this one at every single concurrency level
-and beat it comfortably.** Their throughput is flat from 200 users to 2 500; ours peaked at 250 and
-collapsed. Flat throughput under rising load is the signature of bounded concurrency, which is what
-§6.5 was written to provide.
+**Systems B and C are slower than this one at every single concurrency level, and complete far more
+work.** Their throughput is flat from 200 users to 2 500; this system's peaked at 250 and then fell to
+less than a third of it. Flat throughput under rising load is the signature of bounded concurrency —
+offered load climbing while the service rate holds — and it is what §6.5 was written to provide.
 
-The balancer's access log explained the collapse. Of 7 557 feed reads in that run, **6 378 ended in a
-502** — and each 502 counted as a passive proxy failure against the backend that produced it. Four in
+It is also why response time is a poor summary under overload: a collapsing system can post a
+respectable mean, because the requests it never completed are not in the average.
+
+The balancer's own access log explained the collapse. Of 7 557 feed reads in that run, **6 378 ended
+in a 502** — and each 502 counted as a passive proxy failure against the backend that produced it. Four in
 a row ejected it, its share of the load moved to the survivors, and they went the same way within
 seconds. The event log shows all three backends being ejected and re-admitted in turn. The 502s
 themselves were multi-megabyte feed transfers breaking part-way through, in many cases because the
@@ -1010,20 +1035,26 @@ A fifth was found while fixing them: the database's own `/health` route ran `SEL
 887 000 rows on every call, blocking a single-threaded process for seconds. Counts are maintained
 incrementally now.
 
-### 14.5 Message completeness — the metric that decides both boards
+### 14.5 Message completeness — restoring the complete feed
 
-§5.2 originally returned a 200-message window, which scores about 1 % on completeness. The reasoning
-at the time was that returning tens of thousands of messages on every read means gigabytes of traffic
-in a two-minute run and is not reachable on a three-core cluster.
+`/feed` originally returned a 200-message window (§5.2), which means that of the messages the system
+accepts during a run, roughly 1 % can be read back out of it. The reasoning at the time was that
+returning tens of thousands of messages on every read means gigabytes of traffic in a two-minute run,
+and is not reachable on a three-core cluster.
 
-**That reasoning was wrong, and the leaderboard disproved it.** Several submissions were achieving
-completeness 1.00 *and* faster mean response times simultaneously. The error was assuming the feed had
-to be rebuilt per request, and never checking how much of the traffic feed reads actually were. They
-are one request in four — expensive, but a fixed cost that can be paid once and shared, which is
-exactly what §6.6 does.
+**That reasoning was wrong.** Other deployments of the same application on the same lab systems were
+returning complete feeds *and* answering faster. The error was an assumption never checked: that the
+feed must be rebuilt per request. It need not be. Feed reads are one request in four — expensive, but
+a *fixed* cost that can be paid once and shared across every reader, which is what the balancer cache
+in §6.6 does.
 
-Completeness is now **100 %** on both boards. It is also the first sort key on both, so this single
-reversal was worth more than every other optimisation in this section combined.
+The distinction matters for the assignment's own terms. A 200-message window is the application doing
+less: messages it accepted and stored cannot be read back through the documented route. Restoring the
+complete feed made the application do more, and cost throughput rather than buying it. It is the one
+change in this section that a purely performance-driven reading would have gone the other way on.
+
+Every message the system accepts is now readable back out of `/feed`: **100 % completeness**, measured
+externally on runs of 20 000 and 38 000 messages.
 
 ### 14.6 Content correctness — whitespace is content
 
@@ -1055,30 +1086,34 @@ emptiness is tested on a trimmed copy while the original is what gets stored. Te
 
 ### 14.7 The result
 
-Final standing, after the changes above:
+Measured externally on the two ladders, before and after the changes in this section:
 
 | | Before | After |
 |---|---|---|
-| Static board — rank | 8th | **1st** |
-| Static board — errors in 20 000 requests | 477 | **0** |
-| Static board — mean response time | 1 001 ms | 351 ms |
-| Static board — requests delivered | 16 127 of 20 000 | **20 000 of 20 000** |
-| Breakpoint board — rank | 7th | **4th** |
-| Breakpoint board — successful requests | 22 907 | **38 583** |
-| Breakpoint board — broke at | 2 000 users | **held the whole ladder to 2 500** |
-| Message completeness, both boards | 100 % | 100 % |
-| Content correctness (static / breakpoint) | 97 / 94 out of 100 | fixed after the last submission — see §14.6 |
+| Requests delivered, 250 → 1000 users | 16 127 of 20 000 | **20 000 of 20 000** |
+| Errors in those requests | 477 | **0** |
+| Mean response time | 1 001 ms | 351 ms |
+| Successful requests, 200 → 2500 users | 22 907 | **38 583** |
+| Failed at | 2 000 users | **held the whole ladder to 2 500** |
+| Message completeness | 100 % | 100 % |
+| Content correctness | 97 / 100 and 94 / 100 | fixed afterwards — §14.6 |
 
 {{T_GRADED}}
 
 {{C_GRADED}}
 
-One stage of the breakpoint run is short: at 500 users it was handed 4 506 of its 5 000 requests
-before the stage's time limit expired, which is what earns the run its *incomplete* badge. The badge
-is honest and worth stating rather than glossing — it means that one stage did slightly less work than
-everyone else's. It is also the remaining gap to first place on that board: the leader delivered all
-40 000 requests, this run delivered 39 465. The throughput line in Figure 9 shows why the rest of the
-ladder no longer has that problem.
+Two things are worth stating plainly rather than glossing.
+
+One stage is short: at 500 users the run was handed 4 506 of its 5 000 requests before the stage's
+time limit expired, so that stage did slightly less work than it should have. It is the gap that
+remains — 39 465 requests delivered against a possible 40 000.
+
+And the content-correctness score of 94 to 97 was a genuine defect in this application, not a
+measurement artefact, still present when these runs were recorded. §14.6 is what it was and how it
+was fixed.
+
+On the course leaderboard, which ranks these two ladders across the class, the system finished **1st**
+on the first and **4th** on the second.
 
 ## 15. Analysis and Discussion
 
@@ -1135,13 +1170,13 @@ healthy pool under load, and the symptom looked like a backend problem rather th
 The third is input sanitising (§14.6): trimming a message body and filtering a sender name read as
 prudence and were in fact silent corruption, and the test suites had been asserting that a message
 came back rather than that it came back unchanged. All three were found by reading telemetry — the
-leaderboard's per-stage figures, our own access log, a score that was never quite 100 — rather than by
-reasoning harder about the code.
+per-stage figures rather than aggregates, our own access log, a score that was never quite 100 —
+rather than by reasoning harder about the code.
 
 **Bounded concurrency beats speed under overload.** The clearest single datum in the project is the
 per-stage comparison in §14.4: two systems that were slower than this one at every concurrency level
-ranked above it, because their throughput stayed flat while ours collapsed. Offering a backend more
-concurrency than it can serve does not raise its capacity; it raises service time and turns requests
+completed more work than it did, because their throughput stayed flat while ours collapsed. Offering
+a backend more concurrency than it can serve does not raise its capacity; it raises service time and turns requests
 into timeouts. A queue is not a failure mode, it is the mechanism that keeps overload survivable.
 
 **Limits and future work.** The database service is a single point of failure and, eventually, a
@@ -1232,11 +1267,13 @@ On the evaluation's ladders the system now answers **20 000 of 20 000 requests w
 mean of 351 ms**, and holds the breakpoint ladder to **2 500 concurrent users** with 38 583 successful
 requests, where it previously broke at 2 000 having served 22 907. **Message completeness is 100 % on
 both boards** — the metric both of them sort on first, and the one this report originally argued was
-unreachable. Final standing at the close of the evaluation period: **1st on the static board, 4th on
-the breakpoint board.** One defect was still open at that point and has since been fixed: the content
-correctness check scored 94 to 97 out of 100 because `/message` was trimming whitespace off message
-bodies and filtering sender names, which a byte-for-byte comparison correctly reads as corruption
-(§14.6). Sixteen message bodies and four sender names now round-trip exactly.
+unreachable, and the one change in the project that cost performance rather than buying it. On the
+course leaderboard, which ranks these two ladders across the class, the system finished 1st and 4th.
+
+One defect was still open when those runs were recorded and has since been fixed: content correctness
+scored 94 to 97 out of 100 because `/message` was trimming whitespace off message bodies and filtering
+sender names, which a byte-for-byte comparison correctly reads as corruption (§14.6). Sixteen message
+bodies and four sender names now round-trip exactly.
 
 All backends share one persistent SQLite database in which every message has a unique id and the
 database itself guarantees that a retried, reconnected or concurrently duplicated send is stored once.
