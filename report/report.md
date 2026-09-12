@@ -1203,15 +1203,18 @@ Moving the database off the balancer's system was worth 41 % — six times the e
 threshold sweep. Tuning is real but second-order; finding the actual queue is first-order. The sweep
 was still worth running, because it is what proved that.
 
-**The bottleneck moved three times, and finding it each time mattered more than tuning.** It began on
+**The bottleneck moved four times, and finding it each time mattered more than tuning.** It began on
 sys1 as CPU quota throttling, where the balancer and the database shared one core (§13); moving the
 database was worth 41 %. It then became the balancer's thread-per-connection I/O layer, which
 collapsed from ten thousand requests a second to 385 between 500 and 1 000 connections (§14.2). With
-that fixed it became the backends themselves, saturated by feed serialisation and killed by their own
-memory (§14.4). In the measurements of §11, taken before the last of those, every client connection
-still terminated on sys1 and past 25 clients the backends flatten at 40–65 % utilisation while sys1
-climbs to 70–95 % — which is why the effect of adding a backend is strong from one to two and weaker
-from two to three.
+that fixed it became the backends, saturated by feed serialisation and killed by their own memory
+(§14.4). And with the feed served from the balancer, it became the backends' CPU per *message*: under
+the evaluation's own load all three were throttled in more than half of all scheduling periods while
+the balancer was throttled in none (§14.8), which is what the per-message work in the firehose and
+poll paths was cut for. In the measurements of §11, taken before the last two of those, every client
+connection still terminated on sys1 and past 25 clients the backends flatten at 40–65 % utilisation
+while sys1 climbs to 70–95 % — which is why the effect of adding a backend is strong from one to two
+and weaker from two to three.
 
 **Scaling is still real, and it is what protects the system under overload.** The clearest comparison
 in the report is the open-loop sweep at 200 req/s offered: one backend is at 8.7 s p95 and failing,
