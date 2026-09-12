@@ -148,6 +148,61 @@ async function db(method, pathName, body) {
   try { return await dbOnce(method, pathName, payload); }
   catch (e) { if (method === 'POST' && pathName !== '/messages') throw e; return dbOnce(method, pathName, payload); }
 }
+// ── Coalesced appends ───────────────────────────────────────────────────────
+// Every /message used to be its own HTTP round trip to the database service. At
+// ~270 messages a second per backend that is 270 requests parsed, dispatched and
+// serialised on each end of a link between two single-CPU containers, and the
+// profile of a graded run showed all three backends throttled for exceeding their
+// core while the balancer was not. Appends that arrive in the same event-loop tick
+// now travel in one POST /messages/batch; each caller still gets its own answer,
+// and the database still runs every entry through the same duplicate guard.
+//
+// If the database does not know the batch route yet (an older build, mid rolling
+// deploy) it answers 404 and the batch is sent entry by entry, exactly as before.
+const APPEND_BATCH_MAX = parseInt(process.env.APPEND_BATCH_MAX || '128', 10);
+const appendQueue = [];
+let appendFlushScheduled = false;
+let batchRouteMissing = false;
+function dbAppend(room, entry) {
+  return new Promise((resolve, reject) => {
+    appendQueue.push({ room, entry, resolve, reject });
+    if (!appendFlushScheduled) { appendFlushScheduled = true; setImmediate(flushAppendQueue); }
+  });
+}
+async function flushAppendQueue() {
+  appendFlushScheduled = false;
+  const jobs = appendQueue.splice(0, APPEND_BATCH_MAX);
+  if (appendQueue.length && !appendFlushScheduled) { appendFlushScheduled = true; setImmediate(flushAppendQueue); }
+  if (!jobs.length) return;
+  const room = jobs[0].room;
+  const same = jobs.filter(j => j.room === room);        // one room per batch; the rest re-queue
+  for (const j of jobs) if (j.room !== room) appendQueue.push(j);
+  if (appendQueue.length && !appendFlushScheduled) { appendFlushScheduled = true; setImmediate(flushAppendQueue); }
+  metrics.append_batches = (metrics.append_batches || 0) + 1;
+  metrics.append_batch_max = Math.max(metrics.append_batch_max || 0, same.length);
+  if (same.length === 1 || batchRouteMissing) {
+    for (const j of same) db('POST', '/messages', { room: j.room, entry: j.entry }).then(j.resolve, j.reject);
+    return;
+  }
+  let out;
+  try {
+    out = await db('POST', '/messages/batch', { room, entries: same.map(j => j.entry) });
+  } catch (e) {
+    for (const j of same) j.reject(e);
+    return;
+  }
+  if (!out || !Array.isArray(out.results)) {
+    // 404 from an older database build, or an unexpected shape: fall back, once for all.
+    batchRouteMissing = true;
+    for (const j of same) db('POST', '/messages', { room: j.room, entry: j.entry }).then(j.resolve, j.reject);
+    return;
+  }
+  same.forEach((j, i) => {
+    const r = out.results[i];
+    if (r && r.ok) j.resolve(r);
+    else j.reject(new Error((r && r.error) || 'append failed'));
+  });
+}
 process.on('unhandledRejection', err => { metrics.errors_total++; log('unhandledRejection (survived):', err && err.message); });
 
 // ── Auth: scrypt (Assignment 4 design) ──────────────────────────────────────
@@ -611,8 +666,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, duplicate: true, id, seq: known.seq, 'client-name': clientName,
                                 dedup: 'backend-lru', backend: BACKEND_ID }, { 'X-Duplicate': '1' });
       }
-      const r = await db('POST', '/messages', { room: PUBLIC_ROOM,
-        entry: { id, from: clientName, ts: Date.now(), kind: 'plain', text, via: BACKEND_ID } });
+      const r = await dbAppend(PUBLIC_ROOM,
+        { id, from: clientName, ts: Date.now(), kind: 'plain', text, via: BACKEND_ID });
       remember(id, { seq: r.seq, id });
       if (r.duplicate) {                              // layer 2: messages.id PRIMARY KEY said no
         metrics.duplicates_rejected_by_db++;

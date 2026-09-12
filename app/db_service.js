@@ -297,10 +297,10 @@ function json(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
 }
-function readBody(req) {
+function readBody(req, limit = 65536) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > 65536) { reject(new Error('too large')); req.destroy(); } else chunks.push(c); });
+    req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('too large')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks)) : {}); } catch (e) { reject(e); } });
     req.on('error', reject);
   });
@@ -338,6 +338,30 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { rooms: q.allRooms.all().map(roomToRec) });
     }
     // POST /messages {room, entry{id, from, ts, kind, text|env, via}} — idempotent
+    // POST /messages/batch {room, entries:[...]} -> {ok, results:[{ok,duplicate,seq,id}|{ok:false,error}]}
+    // One HTTP request for the appends a backend collected in one event-loop tick.
+    // Under the evaluation's load each backend sends ~270 messages a second and every
+    // one was its own HTTP round trip: parse, dispatch, serialise, on both ends of a
+    // link between two single-CPU containers. Each entry still goes through appendOne
+    // — the same select-then-insert-on-conflict, in the same group commit — so the
+    // duplicate guard is exactly what it was; only the HTTP overhead is shared.
+    if (u.pathname === '/messages/batch' && req.method === 'POST') {
+      const { room, entries } = await readBody(req, 1048576);
+      if (!room || !Array.isArray(entries) || !entries.length || entries.length > 256)
+        return json(res, 400, { error: 'room and 1-256 entries required' });
+      const results = await Promise.all(entries.map(async entry => {
+        if (!entry || !entry.from || !entry.kind) return { ok: false, error: 'entry{from,kind} required' };
+        if (!entry.id) entry.id = crypto.randomUUID();
+        if (!ID_RE.test(entry.id)) return { ok: false, error: 'bad message id' };
+        try {
+          const out = await appendTx(room, entry);
+          if (out.duplicate) { stats.duplicates_rejected++; return { ok: true, duplicate: true, seq: out.rec.seq, id: out.rec.id }; }
+          stats.appended++;
+          return { ok: true, duplicate: false, seq: out.rec.seq, id: out.rec.id };
+        } catch (e) { return { ok: false, error: String(e.message || e) }; }
+      }));
+      return json(res, 200, { ok: true, results });
+    }
     if (u.pathname === '/messages' && req.method === 'POST') {
       const { room, entry } = await readBody(req);
       if (!room || !entry || !entry.from || !entry.kind) return json(res, 400, { error: 'room and entry{from,kind} required' });

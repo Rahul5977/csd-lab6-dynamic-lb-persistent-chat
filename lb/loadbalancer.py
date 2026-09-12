@@ -110,7 +110,12 @@ DEFAULTS = {
     "prune_after_s": 600,            # remove dynamic backends DOWN this long
     # -- read-through cache for the feed ------------------------------------
     "feed_cache_path": "/feed",      # "" disables it
-    "feed_cache_ms": 300,            # how stale a cached feed may be
+    # How old a cached feed may be before a revalidation is sent behind the next read.
+    # Under load the whole point of the cache is that many readers share one fetch;
+    # every revalidation that finds a change costs a gzip rebuild on a backend and an
+    # ~11 MB transfer late in a ladder, so this is a direct backend-CPU knob. The idle
+    # path is authoritative regardless, which is why staleness here is affordable.
+    "feed_cache_ms": 2000,
     # Above this the feed is NOT cached and is proxied instead. Proxying streams
     # the body in chunks and never holds a whole copy, so a feed that has grown
     # past what this container can safely keep in memory costs throughput rather
@@ -130,7 +135,7 @@ DEFAULTS = {
     # 32 MB: two 16 MB generations. sys1 peaked at 501 MB of 512 during that run.
     "feed_cache_generation_budget": 33554432,
     "feed_quiet_ms": 400,            # idle for this long -> proxy, do not cache
-    "feed_stale_max_ms": 3000,       # never serve a cached feed older than this
+    "feed_stale_max_ms": 5000,       # never serve a cached feed older than this
     "access_log": "logs/lb_access.csv",
 }
 

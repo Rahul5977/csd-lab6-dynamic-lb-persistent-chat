@@ -309,6 +309,28 @@ const fakeLB = http.createServer((req, res) => {
   const blank = await post1(base1, { 'client-name': 'verbatim', msg: '   ' });
   ok('a message of nothing but whitespace is still rejected', blank.status === 400);
 
+  // Appends are coalesced into one database call per event-loop tick. A burst has
+  // to come back with one distinct seq per message, a duplicate id inside the same
+  // burst has to be stored once, and every message has to be readable from the
+  // OTHER backend — i.e. the batch path keeps every guarantee the single path had.
+  console.log('— coalesced appends —');
+  const burstIds = Array.from({ length: 60 }, (_, i) => `burst-${Date.now()}-${i}`);
+  const burst = await Promise.all(burstIds.map((id, i) =>
+    post1(base1, { 'client-name': 'burst', msg: `burst message ${i}`, id })));
+  ok('burst of 60 concurrent posts all accepted', burst.every(r => r.status === 200 && r.data.ok));
+  const burstSeqs = burst.map(r => r.data.seq);
+  ok('every message in the burst got its own seq', new Set(burstSeqs).size === 60);
+  ok('none of the burst was reported duplicate', burst.every(r => r.data.duplicate === false));
+  const twice = await Promise.all([0, 1, 2, 3].map(() =>
+    post1(base1, { 'client-name': 'burst', msg: 'same id four times at once', id: burstIds[0] + '-dup' })));
+  ok('the same id four times in one burst -> exactly one stored, three duplicate',
+     twice.filter(r => r.data.duplicate === false).length === 1 && twice.filter(r => r.data.duplicate === true).length === 3);
+  ok('all four answers carry the same seq', new Set(twice.map(r => r.data.seq)).size === 1);
+  await new Promise(res => setTimeout(res, 600));
+  feed = await fetch(`${base2}/feed`).then(x => x.json());
+  const feedIds = new Set(feed.messages.map(m => m.id));
+  ok('every burst message is readable from the other backend', burstIds.every(id => feedIds.has(id)));
+
   console.log('— graceful deregister on SIGTERM —');
   const b2 = procs.find(p => p.tag === 'test-b2');
   await new Promise(res => { b2.on('exit', res); b2.kill('SIGTERM'); });
