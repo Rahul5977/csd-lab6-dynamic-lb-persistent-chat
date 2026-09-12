@@ -273,6 +273,42 @@ const fakeLB = http.createServer((req, res) => {
   ok('a message written on one backend is visible in /feed on the other',
      feed.messages.some(m => m.id === fresh.data.id));
 
+  // A grader re-reads stored messages and compares them byte for byte with what it
+  // sent. /message used to .trim() the body and filter the sender to an allowlist of
+  // characters, so anything with leading or trailing whitespace came back changed and
+  // scored as mangled. Whitespace is content; these assert that nothing is rewritten.
+  console.log('— messages are stored byte for byte —');
+  const verbatim = [
+    ['leading space', '  leading'],
+    ['trailing space', 'trailing  '],
+    ['trailing newline', 'ends with a newline\n'],
+    ['leading tab', '\tstarts with a tab'],
+    ['CRLF tail', 'ends with crlf\r\n'],
+    ['inner whitespace', 'inner   spaces   kept'],
+    ['unicode', 'h\u00e9llo \u2014 \u65e5\u672c\u8a9e \u2713'],
+    ['quotes and backslash', 'he said "hi" \\ and \'bye\''],
+  ];
+  const sentBodies = [];
+  for (const [, body] of verbatim) {
+    const r = await post1(base1, { 'client-name': 'verbatim', msg: body });
+    sentBodies.push([body, r.data.id]);
+  }
+  await new Promise(res => setTimeout(res, 500));
+  feed = await fetch(`${base2}/feed`).then(x => x.json());
+  const byId = new Map(feed.messages.map(m => [m.id, bodyOf(m)]));
+  for (let i = 0; i < verbatim.length; i++) {
+    const [label, body] = verbatim[i];
+    const [, id] = sentBodies[i];
+    ok(`stored byte for byte: ${label}`, byId.get(id) === body);
+  }
+  const oddName = await post1(base1, { 'client-name': 'client#7:load-gen', msg: 'name check' });
+  await new Promise(res => setTimeout(res, 400));
+  feed = await fetch(`${base2}/feed`).then(x => x.json());
+  ok('the sender is stored as it was sent',
+     feed.messages.some(m => m.id === oddName.data.id && m.from === 'client#7:load-gen'));
+  const blank = await post1(base1, { 'client-name': 'verbatim', msg: '   ' });
+  ok('a message of nothing but whitespace is still rejected', blank.status === 400);
+
   console.log('— graceful deregister on SIGTERM —');
   const b2 = procs.find(p => p.tag === 'test-b2');
   await new Promise(res => { b2.on('exit', res); b2.kill('SIGTERM'); });

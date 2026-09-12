@@ -1,14 +1,24 @@
-=== AUTOMATED TEST SUITES (2026-09-12T14:17:47Z) ===
+=== AUTOMATED TEST SUITES (2026-09-12T14:40:58Z) ===
 
---- node app/tests/smoke.js  (60 assertions) ---
+--- node app/tests/smoke.js  (69 assertions) ---
   ✓ a message written on one backend is visible in /feed on the other
+— messages are stored byte for byte —
+  ✓ stored byte for byte: leading space
+  ✓ stored byte for byte: trailing space
+  ✓ stored byte for byte: trailing newline
+  ✓ stored byte for byte: leading tab
+  ✓ stored byte for byte: CRLF tail
+  ✓ stored byte for byte: inner whitespace
+  ✓ stored byte for byte: unicode
+  ✓ stored byte for byte: quotes and backslash
+  ✓ the sender is stored as it was sent
+  ✓ a message of nothing but whitespace is still rejected
 — graceful deregister on SIGTERM —
   ✓ backend POSTed /lb/deregister before exiting
 
 ALL TESTS PASSED
 
 --- python3 lb/test_lb.py  (39 assertions) ---
-  ✓ GET /feed returns the whole room (3 messages)
   ✓ the deduplicated message appears exactly once in /feed
   ✓ /feed carries what /message wrote
 
@@ -16,4 +26,4 @@ ALL TESTS PASSED
 
 --- node scripts/ws_check.js  (WebSocket tunnelled through the balancer, live) ---
   ✓ WebSocket upgrade proxied by the LB (frames seen: hello, joined, msg)
-  ✓ message delivered over the socket, via backend sys3, seq 3
+  ✓ message delivered over the socket, via backend sys3, seq 4

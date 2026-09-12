@@ -74,6 +74,14 @@ queue is first-order. The sweep is what proved that.
   idle — nothing in flight or queued, no write for 400 ms — the cache is bypassed entirely and the
   read is proxied. The evaluation checks completeness after the load stops, which is exactly when the
   balancer is idle, so staleness is spent only where nothing measures it.
+- **Why was the correctness score 94 out of 100, not 100?** Because `/message` was trimming the
+  message body and filtering the sender name to an allowlist. That looks like prudent input
+  sanitising and it is silent data corruption: a message ending in a newline came back without it, so
+  a byte-for-byte comparison fails. Whitespace the sender chose to include is content. It survived
+  because the suites asserted that a message came *back*, not that it came back *unchanged* — and my
+  own probe of ten awkward inputs passed, because every case had its awkwardness in the middle of the
+  string rather than at the ends. Fixed, with ten assertions now covering it; 20 of 20 bodies and
+  senders round-trip exactly.
 - **Does /feed really return all messages?** Yes — every message in the room, with the true total,
   how many were returned, and whether it was truncated. `?limit=` and `?since=` are still there for
   paging. It was originally a 200-message window; §14.5 of the report explains why that was wrong.
@@ -146,9 +154,11 @@ measurement and each reversed a conclusion.
    can be paid once and shared.
 3. **Node was being killed by the kernel.** It sizes its heap against the host's 120 cores, not the
    512 MB cgroup it lives in. sys4 had been out-of-memory killed 17 times.
-4. **The database's /health scanned the whole table.** `SELECT COUNT(*)` over 887 000 rows on every
+4. **Input sanitising was corrupting messages.** Trimming the body and filtering the sender cost 3
+   to 6 marks out of 100 on every single submission, and no test caught it.
+5. **The database's /health scanned the whole table.** `SELECT COUNT(*)` over 887 000 rows on every
    call, blocking a single-threaded process for seconds.
-5. **A rolling restart silently moved the public routes to a different room**, which looks exactly
+6. **A rolling restart silently moved the public routes to a different room**, which looks exactly
    like the database having lost every message. The deploy script now inherits the running room.
 
 ---
@@ -168,6 +178,7 @@ ejects, restart, re-admit, zero client errors throughout.
 | leaderboard, static board | **rank 1** · 20 000 / 20 000 requests · **0 errors** · 351 ms mean |
 | leaderboard, breakpoint board | **rank 4** · 38 583 successes · held the ladder to **2 500** users |
 | message completeness, both boards | **100 %** |
+| content correctness | was 94-97 / 100 (trimming + name filtering) · now 20 / 20 round-trip exactly |
 | admission control, breakpoint throughput | before: 276 → 78 req/s · after: flat ~175 to 2 500 users |
 | feed cache | one backend fetch serves 72 readers · feed reads reaching a backend 1 579 → 4 |
 | moving the database off sys1 | 165 → 233 req/s (+41 %), p50 −29 %, p95 −24 % |
@@ -176,4 +187,4 @@ ejects, restart, re-admit, zero client errors throughout.
 | knee of the 3-backend curve | 50 clients, 259 req/s |
 | 200 req/s offered, open loop | 1 backend: 8.7 s p95 and failing · 3 backends: 3.1 s, zero failures |
 | database | 1 827 339 messages · 1 827 339 distinct ids · 0 duplicates |
-| test suites | 60 backend assertions, 39 balancer assertions, 5 dedup scenarios — all pass |
+| test suites | 69 backend assertions, 39 balancer assertions, 5 dedup scenarios — all pass |

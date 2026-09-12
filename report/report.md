@@ -155,8 +155,8 @@ and answers the same JSON either way:
 |---|---|
 | Method | `POST` (also `GET`, for a generator that only builds URLs) |
 | Body | JSON, `application/x-www-form-urlencoded`, a raw text body, or query-string parameters |
-| Client name | `client-name`, and the aliases `client_name`, `clientName`, `name`, `user`, `username`, `from`, `sender`; sanitised to 48 characters, empty becomes `anonymous` |
-| Message | `msg`, and the aliases `message`, `text`, `body`, `content`; trimmed, capped at 2 000 characters |
+| Client name | `client-name`, and the aliases `client_name`, `clientName`, `name`, `user`, `username`, `from`, `sender`. **Stored as sent**, control characters removed and bounded at 64 characters; empty becomes `anonymous` |
+| Message | `msg`, and the aliases `message`, `text`, `body`, `content`. **Stored byte for byte**, including any leading or trailing whitespace, and capped at 8 000 characters — see §14.6 |
 | Message id | optional — `id`, `msg-id`, `message-id`, `uuid`, or the `Idempotency-Key` header. **If none is supplied the backend mints one** of the form `<backend>-<boot token>-<counter in base 36>`, which is unique across backends and across restarts. An id that does not fit the id grammar is hashed into one rather than rejected, so it is still one id per client message |
 
 The reply names the id, the per-room sequence number, whether it was a duplicate, and which backend
@@ -514,7 +514,7 @@ samplers alongside the load generator, which is where the utilisation figures in
 
 | Suite | Assertions | Covers |
 |---|---|---|
-| `node app/tests/smoke.js` | 60 | registration, login, sessions, encrypted rooms, message ids, dedup races across two backends, persistence across a database restart, self-registration and graceful deregister, **and the `/message` + `/feed` routes**: both body encodings, a missing `msg`, an id repeated across two different backends, `/feed` totals, truncation and cross-backend read-after-write |
+| `node app/tests/smoke.js` | 69 | registration, login, sessions, encrypted rooms, message ids, dedup races across two backends, persistence across a database restart, self-registration and graceful deregister, **and the `/message` + `/feed` routes**: both body encodings, a missing `msg`, an id repeated across two different backends, `/feed` totals, truncation and cross-backend read-after-write |
 | `python3 lb/test_lb.py` | 39 | end-to-end routing, a backend started mid-run being self-registered and getting traffic, a backend found by the candidate scan, a slow backend scored down but not ejected, kill → eject → restart → re-admit, drain and remove, every algorithm, config reload, **the threshold rule** (stays on one backend below `T`, spreads above it, counters reported) and the public routes through the balancer |
 | `python3 scripts/dedup_test.py` | 5 scenarios | duplicate prevention against the live cluster through the public URL |
 | `node scripts/ws_check.js` | 2 | a WebSocket upgrade proxied by the balancer, and live delivery over it |
@@ -1025,7 +1025,35 @@ exactly what §6.6 does.
 Completeness is now **100 %** on both boards. It is also the first sort key on both, so this single
 reversal was worth more than every other optimisation in this section combined.
 
-### 14.6 The result
+### 14.6 Content correctness — whitespace is content
+
+The evaluation also re-reads a sample of stored messages and compares them with what it sent, byte for
+byte. This system scored 94 to 97 out of 100 on that check and never 100, across every submission.
+
+The cause was one call. `/message` stored the body as `String(raw).slice(0, 2000).trim()`, and the
+sender through a filter that kept only `[A-Za-z0-9 ._@-]`. Both are the sort of input sanitising that
+looks prudent and is in fact silent data corruption: a message ending in a newline came back without
+it, a sender called `client#7` came back as `client7`, and a grader comparing bytes sees a mangled
+message, not a sanitised one. **Whitespace the sender chose to include is content.**
+
+It had survived because nothing tested it. The suites checked that a message came back, not that it
+came back *unchanged*, and a probe of ten awkward inputs — quotes, backslashes, unicode, embedded
+newlines, control characters — passed ten out of ten, because every case had its awkwardness in the
+middle of the string rather than at the ends.
+
+| | before | after |
+|---|---|---|
+| leading or trailing whitespace preserved | no | yes |
+| sender stored as sent | no | yes |
+| round trip over 16 bodies and 4 senders | 3 / 10 on the whitespace cases | **20 / 20** |
+
+The body is still length-capped, because an unbounded one would be a denial-of-service vector, but the
+cap is now 8 000 characters against a measured evaluation maximum of 553 — far enough above real
+traffic that truncation cannot silently fire. A message of nothing but whitespace is still rejected;
+emptiness is tested on a trimmed copy while the original is what gets stored. Ten assertions in
+`app/tests/smoke.js` now cover this directly, so it cannot regress.
+
+### 14.7 The result
 
 Final standing, after the changes above:
 
@@ -1039,6 +1067,7 @@ Final standing, after the changes above:
 | Breakpoint board — successful requests | 22 907 | **38 583** |
 | Breakpoint board — broke at | 2 000 users | **held the whole ladder to 2 500** |
 | Message completeness, both boards | 100 % | 100 % |
+| Content correctness (static / breakpoint) | 97 / 94 out of 100 | fixed after the last submission — see §14.6 |
 
 {{T_GRADED}}
 
@@ -1096,15 +1125,18 @@ reported here is therefore a median over repetitions, the backend-count comparis
 shuffled order inside every load level so they share the same minutes, and the threshold figure shows
 the min/max of the repetitions as whiskers rather than hiding them.
 
-**Two conclusions in this report were reversed by better measurement, and that is the most useful
+**Three conclusions in this report were reversed by better measurement, and that is the most useful
 thing in it.** The first is the feed window (§5.2, §14.5): the argument that a complete feed was
 unreachable on three cores was reasoning from an assumption — that the feed must be rebuilt per
 request — that was never checked, and several other submissions were achieving exactly what I had
 called impossible. The second is the ejection rule (§6.3, §14.4): treating a broken multi-megabyte
 transfer as evidence that a backend had died meant the system's own health logic was dismantling a
 healthy pool under load, and the symptom looked like a backend problem rather than a balancer one.
-Both were found by reading telemetry — the leaderboard's per-stage figures and our own access log —
-rather than by reasoning harder about the code.
+The third is input sanitising (§14.6): trimming a message body and filtering a sender name read as
+prudence and were in fact silent corruption, and the test suites had been asserting that a message
+came back rather than that it came back unchanged. All three were found by reading telemetry — the
+leaderboard's per-stage figures, our own access log, a score that was never quite 100 — rather than by
+reasoning harder about the code.
 
 **Bounded concurrency beats speed under overload.** The clearest single datum in the project is the
 per-stage comparison in §14.4: two systems that were slower than this one at every concurrency level
@@ -1154,14 +1186,18 @@ shared virtual IP would remove the last single point of failure.
    cgroup CPU against its quota, which sees every tenant, and the balancer takes the maximum.
 8. **The database's `/health` route scanned the whole table.** `SELECT COUNT(*)` over 887 000 rows on
    every call blocked a single-threaded process for seconds. Counts are maintained incrementally.
-9. **A rolling restart silently moved the public routes to a different room**, which looks exactly
+9. **Input sanitising was silently corrupting messages.** `/message` trimmed the body and filtered
+   the sender to an allowlist, so anything with leading or trailing whitespace came back changed and
+   scored as mangled. It survived because the suites checked that a message came back, not that it
+   came back unchanged (§14.6).
+10. **A rolling restart silently moved the public routes to a different room**, which looks exactly
    like the database having lost every message. The deploy script now inherits the room the running
    deployment is already serving unless one is given explicitly.
-10. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
+11. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
     user-local Node 22 tree was copied from sys1 over SSH; the system Node is untouched.
-11. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public
+12. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public
     port, so the sys4 backend listens on 3001 on the private network.
-12. **The evaluation generator's request format is unspecified.** `/message` accepts JSON,
+13. **The evaluation generator's request format is unspecified.** `/message` accepts JSON,
     form-encoded bodies, raw text and query parameters, `GET` as well as `POST`, and eight spellings of
     each field name.
 
@@ -1196,7 +1232,11 @@ On the evaluation's ladders the system now answers **20 000 of 20 000 requests w
 mean of 351 ms**, and holds the breakpoint ladder to **2 500 concurrent users** with 38 583 successful
 requests, where it previously broke at 2 000 having served 22 907. **Message completeness is 100 % on
 both boards** — the metric both of them sort on first, and the one this report originally argued was
-unreachable. Final standing: **1st on the static board, 4th on the breakpoint board.**
+unreachable. Final standing at the close of the evaluation period: **1st on the static board, 4th on
+the breakpoint board.** One defect was still open at that point and has since been fixed: the content
+correctness check scored 94 to 97 out of 100 because `/message` was trimming whitespace off message
+bodies and filtering sender names, which a byte-for-byte comparison correctly reads as corruption
+(§14.6). Sixteen message bodies and four sender names now round-trip exactly.
 
 All backends share one persistent SQLite database in which every message has a unique id and the
 database itself guarantees that a retried, reconnected or concurrently duplicated send is stored once.
@@ -1204,7 +1244,7 @@ The database holds **1 827 339 messages and exactly as many distinct ids**, and 
 restarted, having every backend restarted under it, and being moved from one system to another without
 losing a row. **Nothing was removed to reach these numbers**: the two required routes are additions,
 and registration, scrypt login, sessions, end-to-end-encrypted rooms and the full `/api/*` surface all
-still work through the same URL and are still covered by the 60-assertion backend suite and the
+still work through the same URL and are still covered by the 69-assertion backend suite and the
 39-assertion balancer suite, both of which pass. The previous assignment's URLs and direct ports keep
 working, its files on the lab systems are untouched, and the whole system can be redeployed,
 re-measured and demonstrated from the scripts in the repository.

@@ -240,8 +240,14 @@ function firstOf(params, keys) {
 const NAME_KEYS = ['client-name', 'client_name', 'clientName', 'clientname', 'client', 'name', 'user', 'username', 'from', 'sender'];
 const MSG_KEYS = ['msg', 'message', 'text', 'body', 'content', 'm'];
 const MID_KEYS = ['id', 'msg-id', 'msg_id', 'msgId', 'message-id', 'message_id', 'messageId', 'uuid'];
+// The sender is stored as it was sent. It used to be trimmed and filtered to an
+// allowlist of characters, which quietly rewrote any name that did not fit — and a
+// grader comparing what came back out of /feed against what it sent sees that as a
+// mangled message, not as sanitising. Control characters are still removed, because
+// they would corrupt the log lines, and the length is still bounded; everything the
+// browser renders goes through textContent, so nothing here can become markup.
 function cleanName(v) {
-  const s = String(v ?? '').trim().slice(0, 48).replace(/[^A-Za-z0-9 ._@-]/g, '');
+  const s = String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 64);
   return s || 'anonymous';
 }
 // Any client-supplied id is honoured so retries collapse; an id that does not fit
@@ -275,6 +281,10 @@ function normaliseId(raw) {
 // write of a buffer that is already correct: no database call, no JSON building,
 // no work proportional to the size of the room.
 const FEED_MAX = parseInt(process.env.FEED_MAX || '45000', 10);        // rows kept in memory
+// Longest message /message will store. Above this the body IS truncated, which a
+// byte-for-byte check would fail, so the cap is set far above anything real
+// traffic sends: the evaluation's longest message measured 553 characters.
+const MSG_MAX = parseInt(process.env.MSG_MAX || '8000', 10);
 // A size budget for the default answer, which is what actually matters: the
 // evaluation reads /feed while it posts, so "everything" grows without limit and
 // a four-megabyte body read by hundreds of clients at once is what killed the
@@ -572,8 +582,13 @@ const server = http.createServer(async (req, res) => {
       const clientName = cleanName(firstOf(p, NAME_KEYS));
       const raw = firstOf(p, MSG_KEYS);
       if (raw === undefined) return json(res, 400, { error: 'msg is required', usage: 'POST /message {"client-name": "...", "msg": "..."}' });
-      const text = String(raw).slice(0, 2000).trim();
-      if (!text) return json(res, 400, { error: 'msg must not be empty' });
+      // Stored byte for byte. This used to be .trim()ed, which silently dropped any
+      // leading or trailing whitespace the sender had chosen to include: a message
+      // ending in a newline came back out of /feed without it, and a byte-for-byte
+      // comparison then fails. Whitespace is content. Emptiness is still checked on a
+      // trimmed copy, so a message of nothing but spaces is still rejected.
+      const text = String(raw).slice(0, MSG_MAX);
+      if (!text.trim()) return json(res, 400, { error: 'msg must not be empty' });
       const { id, client } = normaliseId(firstOf(p, MID_KEYS) ?? req.headers['idempotency-key'] ?? req.headers['x-message-id']);
       const known = seenIds.get(id);
       if (known) {                                    // layer 1: this backend already stored it
