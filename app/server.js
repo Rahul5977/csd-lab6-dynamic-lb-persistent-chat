@@ -274,7 +274,7 @@ function normaliseId(raw) {
 // database firehose, whichever backend accepted it. Serving /feed then costs one
 // write of a buffer that is already correct: no database call, no JSON building,
 // no work proportional to the size of the room.
-const FEED_MAX = parseInt(process.env.FEED_MAX || '35000', 10);        // rows kept in memory
+const FEED_MAX = parseInt(process.env.FEED_MAX || '45000', 10);        // rows kept in memory
 // A size budget for the default answer, which is what actually matters: the
 // evaluation reads /feed while it posts, so "everything" grows without limit and
 // a four-megabyte body read by hundreds of clients at once is what killed the

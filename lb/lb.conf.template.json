@@ -19,12 +19,12 @@
   "ewma_alpha": 0.2,
   "explore_pct": 5,
   "switch_threshold": 0.15,
-  "inflight_cap": 24,
+  "inflight_cap": 56,
   "rt_cap_ms": 250,
   "min_dwell_ms": 0,
   "load_weight": 1.0,
   "connect_timeout_s": 5,
-  "upstream_timeout_s": 30,
+  "upstream_timeout_s": 8,
   "register_token": "__SET_BY_DEPLOY__",
   "discovery": {
     "candidates": [
@@ -44,7 +44,10 @@
   "access_log": "logs/lb_access.csv",
   "passive_fail_threshold": 4,
   "feed_cache_path": "/feed",
-  "feed_cache_ms": 200,
-  "feed_cache_max_bytes": 2097152,
-  "feed_cache_bytes_per_s": 4194304
+  "feed_cache_ms": 1000,
+  "feed_cache_max_bytes": 25165824,
+  "backend_slots": 56,
+  "feed_slots": 8,
+  "admission_enabled": true,
+  "feed_quiet_ms": 400
 }

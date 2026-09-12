@@ -40,6 +40,11 @@ NODE22="v22.23.2"
 ssh_host()  { case "$1" in sys1) echo lbsys1;; sys2) echo lbsys2;; sys3) echo lbsys3;; sys4) echo lbsys4;; esac; }
 app_port()  { case "$1" in sys4) echo 3001;; *) echo 3000;; esac; }   # D-002: sys4:3000 is the Contour project
 priv_ip()   { case "$1" in sys1) echo 172.17.0.70;; sys2) echo 172.17.0.71;; sys3) echo 172.17.0.72;; sys4) echo 172.17.0.73;; esac; }
+# Node sizes its old-space against the HOST (120 cores, hundreds of GB), not against
+# the 512 MB cgroup it actually lives in, so it grows past the limit and gets killed:
+# sys4 had been OOM-killed 17 times before this cap existed. sys3 gets less because
+# the SQLite service shares its 512 MB.
+heap_mb()   { case "$1" in sys3) echo 192;; *) echo 288;; esac; }
 DB_HOST="$(ssh_host "$DB_SYS")"
 DB_IP="$(priv_ip "$DB_SYS")"
 
@@ -107,6 +112,7 @@ deploy_db() {
     ulimit -n 65536 2>/dev/null || true
     # MIGRATE_FROM imports Lab 5's users/rooms/messages once (marker file prevents repeats)
     nohup env PORT=$DB_PORT DATA_DIR=$REMOTE_DIR/data MIGRATE_FROM=\$HOME/assignment5/data \
+        NODE_OPTIONS=--max-old-space-size=160 \
         \$HOME/node/bin/node app/db_service.js >> db.log 2>&1 < /dev/null &
     echo \$! > db.pid
   "
@@ -115,7 +121,7 @@ deploy_db() {
 }
 
 deploy_backend() {  # $1 = sys2|sys3|sys4
-  local sys="$1" host="$(ssh_host "$1")" port="$(app_port "$1")" ip="$(priv_ip "$1")"
+  local sys="$1" host="$(ssh_host "$1")" port="$(app_port "$1")" ip="$(priv_ip "$1")" heap="$(heap_mb "$1")"
   echo "== backend v3 -> $sys ($host, port $port, advertise $ip) =="
   push "$host" app
   ssh "$host" "
@@ -123,8 +129,8 @@ deploy_backend() {  # $1 = sys2|sys3|sys4
     cd $REMOTE_DIR
     export PATH=\"\$HOME/node/bin:\$PATH\"
     command -v node >/dev/null || { echo 'no node — run scripts/install_node.sh $host first'; exit 1; }
-    printf 'PORT=%s\nBACKEND_ID=%s\nDB_URL=http://%s:%s\nLB_URL=http://%s:%s\nLB_TOKEN=%s\nADVERTISE_HOST=%s\nADVERTISE_PORT=%s\nLB_HEARTBEAT_S=5\nLOG_LEVEL=info\nUV_THREADPOOL_SIZE=4\nPUBLIC_ROOM=%s\nFEED_MAX=%s\nFEED_BYTES=%s\n' \
-        '$port' '$sys' '$DB_IP' '$DB_PORT' '$SYS1_IP' '$LB_PORT' '$LB_TOKEN' '$ip' '$port' '$PUBLIC_ROOM' "${FEED_MAX:-35000}" "${FEED_BYTES:-1048576}" > .env
+    printf 'PORT=%s\nBACKEND_ID=%s\nDB_URL=http://%s:%s\nLB_URL=http://%s:%s\nLB_TOKEN=%s\nADVERTISE_HOST=%s\nADVERTISE_PORT=%s\nLB_HEARTBEAT_S=5\nLOG_LEVEL=info\nUV_THREADPOOL_SIZE=4\nPUBLIC_ROOM=%s\nFEED_MAX=%s\nFEED_BYTES=%s\nNODE_OPTIONS=--max-old-space-size=%s\n' \
+        '$port' '$sys' '$DB_IP' '$DB_PORT' '$SYS1_IP' '$LB_PORT' '$LB_TOKEN' '$ip' '$port' '$PUBLIC_ROOM' "${FEED_MAX:-45000}" "${FEED_BYTES:-1048576}" '$heap' > .env
     # stop OUR previous instance (pidfile) and, on sys2/sys3, the Lab 5 backend holding port $port
     [ -f backend.pid ] && kill \$(cat backend.pid) 2>/dev/null || true
     if [ -f ~/assignment5/backend.pid ] && [ '$port' = 3000 ]; then kill \$(cat ~/assignment5/backend.pid) 2>/dev/null || true; fi

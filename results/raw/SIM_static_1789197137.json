@@ -1,0 +1,30 @@
+{
+ "run_id": "SIM_static_1789197137",
+ "board": "static",
+ "url": "http://10.1.75.53:3269",
+ "stages": [
+  {
+   "concurrency": 50,
+   "budget": 300,
+   "requests": 350,
+   "successes": 317,
+   "errors": 33,
+   "timeouts": 33,
+   "err_rate": 0.09429,
+   "mean_ms": 2319.5,
+   "rps": 12.29
+  }
+ ],
+ "mean_response_ms": 2319.5,
+ "total_requests": 350,
+ "total_successes": 317,
+ "total_errors": 33,
+ "err_rate_overall": 0.09429,
+ "peak_rps": 12.29,
+ "break_concurrency": null,
+ "accepted_msgs": 226,
+ "delivered": 226,
+ "lost": 0,
+ "completeness": 1.0,
+ "integrity_note": "/feed returned 45229 of 55024 messages in the room"
+}

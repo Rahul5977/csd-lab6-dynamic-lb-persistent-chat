@@ -145,6 +145,13 @@ function countOf(room) {
   return n;
 }
 
+// The same argument applies to the whole table, and more sharply: /health ran
+// SELECT COUNT(*) FROM messages on every call, which at 887 000 rows is a full
+// scan that blocks this single-threaded process for seconds and stalls every
+// append queued behind it. Read once at boot, then maintain it.
+let totalRows = q.countAll.get().n;
+const dupsAtBoot = q.countDups.get().n;   // same reason: dedup_log grows with the load
+
 // ── Idempotent append: the heart of the "no duplicates" guarantee ───────────
 // Runs as ONE transaction. Node is single-threaded and DatabaseSync is
 // synchronous, so two backends POSTing the same id at the same instant are
@@ -172,6 +179,7 @@ function appendOne(room, entry) {
   }
   feedCache.delete(room);                         // /feed snapshot for this room is stale now
   if (roomCount.has(room)) roomCount.set(room, roomCount.get(room) + 1);
+  totalRows += 1;
   return { duplicate: false, rec: rowToEntry(q.getMsg.get(entry.id)) };
 }
 
@@ -407,8 +415,8 @@ const server = http.createServer(async (req, res) => {
       let size = 0; try { size = fs.statSync(DB_FILE).size; } catch (e) {}
       return json(res, 200, {
         service: 'db', engine: 'sqlite (node:sqlite, WAL)', file: DB_FILE, db_bytes: size,
-        users: q.countUsers.get().n, rooms: q.countRooms.get().n, messages: q.countAll.get().n,
-        duplicates_rejected_total: q.countDups.get().n, duplicates_rejected_since_boot: stats.duplicates_rejected,
+        users: q.countUsers.get().n, rooms: q.countRooms.get().n, messages: totalRows,
+        duplicates_rejected_total: dupsAtBoot + stats.duplicates_rejected, duplicates_rejected_since_boot: stats.duplicates_rejected,
         appended_since_boot: stats.appended, requests: stats.requests, subscribers: subscribers.size,
         commit_batches: stats.batches, biggest_batch: stats.batch_max,
         appends_per_commit: stats.batches ? Math.round(stats.appended / stats.batches * 100) / 100 : 0,
@@ -416,7 +424,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (u.pathname === '/health') {
-      return json(res, 200, { status: 'ok', service: 'db', engine: 'sqlite', uptime: Math.round((Date.now() - started) / 1000), subscribers: subscribers.size, messages: q.countAll.get().n, requests: stats.requests });
+      return json(res, 200, { status: 'ok', service: 'db', engine: 'sqlite', uptime: Math.round((Date.now() - started) / 1000), subscribers: subscribers.size, messages: totalRows, requests: stats.requests });
     }
     json(res, 404, { error: 'no route' });
   } catch (e) {
