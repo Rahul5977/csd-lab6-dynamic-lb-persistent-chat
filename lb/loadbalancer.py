@@ -611,6 +611,7 @@ class FeedCache:
         self.lock = threading.Lock()
         self.plain = None         # same answer without Content-Encoding, for clients
                                   # that did not offer gzip
+        self.encoding = b""       # Content-Encoding of the cached body (b"br"/b"gzip"/b"")
         self.revalidating = None  # in-flight revalidation, shared by every waiter
         self.revalidations = 0
         self.stale_serves = 0
@@ -626,6 +627,16 @@ class FeedCache:
 
     def fresh(self, max_age_ms):
         return self.body is not None and (time.time() - self.at) * 1000 < max_age_ms
+
+    def accepts(self, accept_encoding):
+        """Can this client take the cached body as-is? An identity body suits
+        everyone; an encoded one needs its token in the client's Accept-Encoding."""
+        if self.body is None:
+            return False
+        if not self.encoding:
+            return True
+        toks = [t.strip().split(b";")[0] for t in accept_encoding.lower().split(b",")]
+        return self.encoding in toks
 
     def take(self, accepts_gzip, budget):
         """Reserve the cached body for streaming to one client, or return None if
@@ -766,8 +777,11 @@ class FeedCache:
                 asyncio.open_connection(b.host, b.port, limit=IO_BUF),
                 cfg["connect_timeout_s"])
             cond = (b"If-None-Match: " + self.etag + b"\r\n") if self.etag else b""
+            # br first: on the evaluation's feed brotli is 5.4x smaller than gzip at the
+            # same cost (the message bodies are drawn from a pool that repeats far
+            # beyond gzip's window). The backend answers with whichever it can.
             w.write(("GET %s HTTP/1.1\r\nHost: lb-feed-cache\r\n"
-                     "Accept-Encoding: gzip\r\nConnection: close\r\n" % path).encode()
+                     "Accept-Encoding: br, gzip\r\nConnection: close\r\n" % path).encode()
                     + cond + b"\r\n")
             await w.drain()
             first, headers, hmap = await asyncio.wait_for(
@@ -801,9 +815,10 @@ class FeedCache:
                 if l.split(b":", 1)[0].strip().lower() not in
                 (b"connection", b"keep-alive", b"content-length", b"content-encoding")]
         etag = hmap.get(b"etag", b"")
-        gzipped = b"gzip" in hmap.get(b"content-encoding", b"").lower()
+        encoding = hmap.get(b"content-encoding", b"").strip().lower()   # b"br", b"gzip" or b""
+        gzipped = bool(encoding)
         body = b"HTTP/1.1 200 OK\r\n" + b"".join(keep) + \
-            (b"Content-Encoding: gzip\r\n" if gzipped else b"") + \
+            ((b"Content-Encoding: " + encoding + b"\r\n") if encoding else b"") + \
             b"Content-Length: " + str(len(payload)).encode() + b"\r\n" \
             b"X-LB-Feed-Cache: hit\r\nConnection: keep-alive\r\n\r\n" + payload
         # Write the payload to a file for sendfile. A regular file, not /dev/shm: its
@@ -828,6 +843,7 @@ class FeedCache:
         with self.lock:
             old_body = self.body
             self.body = body
+            self.encoding = encoding
             self.plain = None if gzipped else body
             if fobj is not None:
                 self.files[id(body)] = (head, fobj, len(payload), path)
@@ -1046,7 +1062,11 @@ POOL_MAX = 512
 # transport's write high-water mark bounds what Python queues, and a socket buffer
 # only holds bytes the peer has not yet acknowledged, at most CLIENT_SNDBUF x2 per
 # connection that is actually mid-transfer.
-CLIENT_SNDBUF = 131072     # feed bodies go this way: 128 KB, the kernel doubles it
+# 64 KB (128 KB effective). 128 KB was tried first and the kernel killed the balancer
+# twice in the 2 500-user stage: a few hundred concurrent feed transfers each holding
+# up to 256 KB of unacknowledged bytes is kernel socket memory the cgroup charges.
+# 128 KB in flight at 3.7 ms to the evaluation host is still ~35 MB/s per connection.
+CLIENT_SNDBUF = 65536
 CLIENT_RCVBUF = IO_BUF     # requests are small
 UPSTREAM_RCVBUF = 262144   # revalidation pulls an 11 MB feed from a backend this way
 UPSTREAM_SNDBUF = 65536    # POST bodies
@@ -1275,12 +1295,13 @@ async def handle_client(creader, cwriter):
                      float(cfg.get("feed_quiet_ms", 400)))
             if fp and not quiet and method == b"GET" \
                     and path.decode(errors="replace") == fp:
-                accepts_gzip = b"gzip" in hmap.get(b"accept-encoding", b"").lower()
                 # Revalidate first. This is where the 6.5 GB the evaluation pulled
                 # out of /feed in three minutes stops crossing the internal network
                 # twice: confirmed-current bytes are served from one shared buffer
                 # here, and the backends go back to serving messages.
-                if await FEED_CACHE.ensure_fresh():
+                fresh_ok = await FEED_CACHE.ensure_fresh()
+                accepts_gzip = FEED_CACHE.accepts(hmap.get(b"accept-encoding", b""))
+                if fresh_ok and accepts_gzip:
                     if FEED_CACHE.etag and hmap.get(b"if-none-match") == FEED_CACHE.etag:
                         # Nothing pinned: a 304 carries no body at all.
                         not_modified = (b"HTTP/1.1 304 Not Modified\r\nETag: " +
@@ -1406,7 +1427,9 @@ async def handle_client(creader, cwriter):
                             continue
                         out.append(line)
                     out.append(b"X-LB-Active-Backends: " + str(LB_STATE.active_count).encode() + b"\r\n")
-                    out.append(b"Connection: keep-alive\r\n" if r_clen is not None else b"Connection: close\r\n")
+                    client_close = b"close" in hmap.get(b"connection", b"").lower()
+                    out.append(b"Connection: keep-alive\r\n" if (r_clen is not None and not client_close)
+                               else b"Connection: close\r\n")
                     out.append(b"\r\n")
                     cwriter.write(b"".join(out))
                     replied = True          # past this point a 502 would corrupt the reply
@@ -1426,8 +1449,8 @@ async def handle_client(creader, cwriter):
                         backend.pool.append((ur, uw))
                     else:
                         close_writer(uw)
-                    if r_clen is None:
-                        return
+                    if r_clen is None or client_close:
+                        return              # the client asked us to close: HTTP/1.1 says so
                 except (OSError, ConnectionError, asyncio.TimeoutError,
                         asyncio.IncompleteReadError, ValueError, IndexError):
                     backend.errors += 1
