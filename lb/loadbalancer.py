@@ -562,12 +562,14 @@ class LB:
         return pool[hash(client_ip) % len(pool)]
 
     # -- access log -----------------------------------------------------------
-    def log(self, client, method, path, backend_id, ms, status, nbytes):
+    def log(self, client, method, path, backend_id, ms, status, nbytes, queue_ms=0.0):
         """Access log. Lines are accumulated and flushed by flush_log() once a
         second: line-buffered writing cost one syscall per proxied request, which
-        is real money when the balancer is the busiest process on its system."""
+        is real money when the balancer is the busiest process on its system.
+        `ms` is the upstream/serve time; `queue_ms` is how long the request waited
+        for a dispatch slot first — the two halves of what the client experienced."""
         line = (f"{time.time():.3f},{client},{method},{path},{backend_id},"
-                f"{ms:.1f},{status},{nbytes},{self.active_count}\n")
+                f"{ms:.1f},{status},{nbytes},{self.active_count},{queue_ms:.1f}\n")
         with self.log_lock:
             self.log_buf.append(line)
             if len(self.log_buf) >= 512:
@@ -1288,6 +1290,7 @@ async def handle_client(creader, cwriter):
                 # page cache without passing through Python; the loop is free to
                 # dispatch the requests queued behind it. fallback=True keeps the
                 # old path for any transport the native call cannot handle.
+                t_serve = time.time()
                 try:
                     rec = FEED_CACHE.files.get(id(body_out))
                     if rec is not None:
@@ -1305,7 +1308,7 @@ async def handle_client(creader, cwriter):
                 finally:
                     FEED_CACHE.done(body_out)
                 FEED_CACHE.hits += 1
-                LB_STATE.log(client_ip, "GET", fp, "cache", 0.0, 200, len(body_out))
+                LB_STATE.log(client_ip, "GET", fp, "cache", (time.time() - t_serve) * 1000, 200, len(body_out))
                 continue
 
             is_ws = (b"upgrade" in hmap.get(b"connection", b"").lower()
@@ -1389,7 +1392,7 @@ async def handle_client(creader, cwriter):
                     backend.observe(ms, LB_STATE.cfg["ewma_alpha"])     # the dynamic signal
                     if status >= 500:
                         backend.errors += 1
-                    LB_STATE.log(client_ip, method.decode(), path.decode(), backend.id, ms, status, nbytes)
+                    LB_STATE.log(client_ip, method.decode(), path.decode(), backend.id, ms, status, nbytes, queue_ms)
 
                     if keep_up and len(backend.pool) < POOL_MAX:
                         backend.pool.append((ur, uw))
