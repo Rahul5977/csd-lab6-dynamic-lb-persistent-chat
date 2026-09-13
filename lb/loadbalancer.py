@@ -1035,11 +1035,26 @@ WRITE_HWM = 32768        # per-connection write buffer before backpressure appli
 POOL_MAX = 512
 
 
-def tune_writer(w, limit_writes=True):
-    """Big TCP buffers + no Nagle. Bodies here are tens of kilobytes and the hop to
-    the backends crosses a container bridge, so a small receive buffer turns one
-    logical read into a dozen recv() syscalls — which is what actually costs the
-    balancer its CPU on a one-core system."""
+# Kernel socket buffers, by which way the bytes flow. These were both 16 KB for a
+# long time, set alongside the memory work — and a 16 KB send buffer caps a
+# connection at ~32 KB in flight, so its throughput becomes 32 KB per round trip.
+# Measured against the two systems above ours on the leaderboard from the same
+# client: 4.7-5.0 MB/s for us, 19-23 MB/s for them, on the same NAT box; and our
+# time-to-first-byte was the best of the three. Every feed read the evaluation
+# timed out was a transfer that this cap made three to five times longer than it
+# needed to be. The memory that setting was protecting is protected elsewhere: the
+# transport's write high-water mark bounds what Python queues, and a socket buffer
+# only holds bytes the peer has not yet acknowledged, at most CLIENT_SNDBUF x2 per
+# connection that is actually mid-transfer.
+CLIENT_SNDBUF = 131072     # feed bodies go this way: 128 KB, the kernel doubles it
+CLIENT_RCVBUF = IO_BUF     # requests are small
+UPSTREAM_RCVBUF = 262144   # revalidation pulls an 11 MB feed from a backend this way
+UPSTREAM_SNDBUF = 65536    # POST bodies
+
+
+def tune_writer(w, limit_writes=True, role="client"):
+    """No Nagle, a bounded transport write buffer, and socket buffers sized for the
+    direction the bytes travel (see above)."""
     try:
         if limit_writes:
             # Without this a slow client lets the balancer queue an unbounded body
@@ -1050,8 +1065,12 @@ def tune_writer(w, limit_writes=True):
         if sock is None:
             return
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, IO_BUF)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, IO_BUF)
+        if role == "upstream":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UPSTREAM_RCVBUF)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UPSTREAM_SNDBUF)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, CLIENT_RCVBUF)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, CLIENT_SNDBUF)
     except (OSError, AttributeError):
         pass
 
@@ -1150,7 +1169,7 @@ async def get_upstream(backend, timeout):
     r, w = await asyncio.wait_for(
         asyncio.open_connection(backend.host, backend.port, limit=IO_BUF),
         LB_STATE.cfg["connect_timeout_s"])
-    tune_writer(w)
+    tune_writer(w, role="upstream")
     return r, w, False
 
 
@@ -1291,13 +1310,14 @@ async def handle_client(creader, cwriter):
                 # dispatch the requests queued behind it. fallback=True keeps the
                 # old path for any transport the native call cannot handle.
                 t_serve = time.time()
+                sent = 0
                 try:
                     rec = FEED_CACHE.files.get(id(body_out))
                     if rec is not None:
                         head, fobj, plen, _path = rec
                         cwriter.write(head)
                         await cwriter.drain()
-                        await asyncio.get_running_loop().sendfile(
+                        sent = await asyncio.get_running_loop().sendfile(
                             cwriter.transport, fobj, 0, plen, fallback=True)
                         FEED_CACHE.sendfile_served += 1
                     else:
@@ -1311,8 +1331,12 @@ async def handle_client(creader, cwriter):
                 # The client's Accept-Encoding rides along as the "backend" field for
                 # cache hits: which codecs the evaluation client can take decides how
                 # small the feed can be made, and nothing else records it.
+                # bytes column = bytes ACTUALLY handed to the kernel for this reader, not
+                # the body size: whether the evaluation client reads a whole feed or
+                # abandons it part-way is the question this run has to answer.
                 ae = hmap.get(b"accept-encoding", b"-").decode(errors="replace").replace(",", ";")[:40]
-                LB_STATE.log(client_ip, "GET", fp, "cache " + ae, (time.time() - t_serve) * 1000, 200, len(body_out))
+                LB_STATE.log(client_ip, "GET", fp, "cache " + ae, (time.time() - t_serve) * 1000, 200,
+                             sent if rec is not None else len(body_out))
                 continue
 
             is_ws = (b"upgrade" in hmap.get(b"connection", b"").lower()
