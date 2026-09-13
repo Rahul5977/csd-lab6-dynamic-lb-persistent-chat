@@ -567,7 +567,7 @@ async function feedLoad(catchUp) {
     feedReady = true;
     if (!catchUp) {
       log(`feed ready: ${feedCount} messages, ${(feedLen / 1024).toFixed(0)} KB`);
-      feedBrotli();        // warm the copy the balancer asks for, so its first read gets it
+      feedBrotli(); feedGzip();   // warm both copies, so no first reader pays for one
     }
     else if (feedCount > before) log(`feed caught up: +${feedCount - before} messages`);
   } catch (e) {
@@ -728,9 +728,18 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(304, { 'ETag': etag, 'X-Backend-Id': BACKEND_ID });
           return res.end();
         }
+        // A client that accepts an encoding gets the WHOLE feed in it, always. The
+        // copies are rebuilt off the event loop and rate-limited, so a copy can be
+        // momentarily absent (first read after boot, or the other encoding was the
+        // one being warmed); in that case it is built here, once, synchronously,
+        // rather than falling through to the bounded identity window below — which
+        // would hand a gzip-only reader a truncated feed on a large room.
         const ae = String(req.headers['accept-encoding'] || '');
-        const br = /\bbr\b/.test(ae) ? feedBrotli() : null;
-        const gz = !br && /\bgzip\b/.test(ae) ? feedGzip() : null;
+        const wantBr = /\bbr\b/.test(ae), wantGz = /\bgzip\b/.test(ae);
+        let br = wantBr ? feedBrotli() : null;
+        if (wantBr && !br) { feedBr = { buf: zlib.brotliCompressSync(Buffer.concat([feedHead(feedCount), feedBuf.subarray(0, feedLen), FEED_TAIL]), FEED_BR_OPTS), at: Date.now(), rows: feedCount, busy: false }; br = feedBr.buf; }
+        let gz = !br && wantGz ? feedGzip() : null;
+        if (!br && wantGz && !gz) { feedGz = { buf: zlib.gzipSync(Buffer.concat([feedHead(feedCount), feedBuf.subarray(0, feedLen), FEED_TAIL]), { level: FEED_GZIP_LEVEL }), at: Date.now(), rows: feedCount, busy: false }; gz = feedGz.buf; }
         const enc = br ? 'br' : (gz ? 'gzip' : null);
         if (enc) {
           const body = br || gz;
