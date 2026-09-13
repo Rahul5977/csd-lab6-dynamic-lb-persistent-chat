@@ -567,7 +567,13 @@ async function feedLoad(catchUp) {
     feedReady = true;
     if (!catchUp) {
       log(`feed ready: ${feedCount} messages, ${(feedLen / 1024).toFixed(0)} KB`);
-      feedBrotli(); feedGzip();   // warm both copies, so no first reader pays for one
+      // Warm both compressed copies OFF the event loop. Done inline these are ~650 ms
+      // each on an 18 MB feed, and blocking the loop for that long right after boot
+      // stalls /health and every in-flight request (one graded-room restart cost a
+      // reader 8.7 s and a writer a 502 that way).
+      { const rows = feedCount, snap = Buffer.concat([feedHead(rows), feedBuf.subarray(0, feedLen), FEED_TAIL]);
+        feedBr.busy = true; zlib.brotliCompress(snap, FEED_BR_OPTS, (e, o) => { if (!e) feedBr = { buf: o, at: Date.now(), rows, busy: false }; else feedBr.busy = false; });
+        feedGz.busy = true; zlib.gzip(snap, { level: FEED_GZIP_LEVEL }, (e, o) => { if (!e) feedGz = { buf: o, at: Date.now(), rows, busy: false }; else feedGz.busy = false; }); }
     }
     else if (feedCount > before) log(`feed caught up: +${feedCount - before} messages`);
   } catch (e) {
@@ -654,8 +660,14 @@ const server = http.createServer(async (req, res) => {
     if (TEST_SLOW_MS && u.pathname !== '/health') await new Promise(r => setTimeout(r, TEST_SLOW_MS));
     // ---- infra endpoints -------------------------------------------------
     if (u.pathname === '/health') {
-      return json(res, draining ? 503 : 200, {
-        status: draining ? 'draining' : 'ok', backend: BACKEND_ID, version: VERSION,
+      // Not healthy until the feed is loaded. Between boot and the end of the
+      // initial load a bare /feed can only answer from the database's bounded
+      // page, and a backend that would hand a reader a 200-row window is not one
+      // the balancer should be routing to. The deploy script and the balancer's
+      // rise threshold both key off this status.
+      const ready = !draining && feedReady;
+      return json(res, ready ? 200 : 503, {
+        status: draining ? 'draining' : (feedReady ? 'ok' : 'loading'), backend: BACKEND_ID, version: VERSION,
         uptime: Math.round((Date.now() - started) / 1000), connections: metrics.ws_connections,
         db_firehose: dbWSUp, load: loadSnapshot(),
       });
