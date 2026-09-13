@@ -1195,6 +1195,56 @@ next run; the report will not wait for it, but the repository's history will sho
 
 <div class="pagebreak"></div>
 
+### 14.9 Where the bytes went — the feed transfer, and brotli
+
+With the balancer logging queue wait and serve time per request, one graded run attributed every
+timeout it recorded: 1 051 feed reads took longer than 3 s against 1 045 timeouts, and no message
+request took more than 2 s anywhere. Feed transfers were running at ~1 MB/s per connection. Two
+measurements then located the cause, and the answer was not what the earlier sections assumed.
+
+**The first was ours.** A single stream from sys2 pulled the 11 MB feed from sys1 at 87 MB/s, so
+the limit was per connection, and the same laptop pulling from the two systems ranked above this one
+on the same NAT box measured 4.7–5.0 MB/s for us and 19–23 MB/s for them, with our time-to-first-byte
+the best of the three. The balancer had been setting every socket's send buffer to 16 KB, placed
+there with the memory work in §6.6. A 16 KB send buffer caps a connection at ~32 KB in flight, so
+throughput becomes 32 KB per round trip. The memory it was protecting is protected by the transport's
+write high-water mark; a socket buffer holds only bytes the peer has not yet acknowledged. With a
+64 KB send buffer on client sockets the same laptop measured 17.7–22.9 MB/s — level with the leaders.
+
+**The second was theirs, and it is the largest single finding in this report.** At 100 concurrent
+full feed reads from inside the lab, the balancer pushed 462 MB/s aggregate and the rank-2 system
+422 MB/s; server speed was equal. Each of our reads took 2.4 s because each was 11 MB; each of his
+took 0.4–0.6 s because each was **2.4 MB** — 14.4 MB when a client offers only gzip, 2.4 MB when it
+offers `br`. The evaluation client offers `gzip, deflate, br`.
+
+Why brotli is six times smaller here: the evaluation's message bodies look random but are drawn
+from a pool. In the graded room, 56 577 harness messages carry only **4 778 distinct bodies** once
+the unique `#tag# timestamp=` prefix is stripped, each reused a dozen times. An earlier check in
+this project counted distinct *whole* messages, found them all distinct, and concluded the text was
+incompressible — fooled by the prefix. gzip's 32 KB window sees about a hundred messages back and
+never finds a repeat; brotli's window sees the whole pool. On the real 18.7 MB feed:
+
+| encoding | size | cost |
+|---|---|---|
+| gzip level 6 (as deployed until now) | 11.07 MB | 649 ms |
+| brotli quality 1–3, 4 MB window | ~11 MB | 285–399 ms |
+| **brotli quality 4, 4 MB window** | **2.06 MB** | **656 ms** |
+| brotli quality 6, 16 MB window | 2.49 MB | 1 791 ms |
+
+Quality 4 is the threshold at which brotli's long-range matcher is used; the window must exceed the
+~1.4 MB pool. The result is byte-identical on round trip. The backends now build a brotli copy the
+way they build the gzip one, the balancer revalidates asking for `br` and serves it only to a client
+that accepts it, and a client that accepts only gzip still gets the whole feed in gzip — an encoding
+a client accepts must always carry the complete feed, never a window. Measured on the live cluster
+under write load: 50 concurrent full reads at 2.06 MB each, median 0.2–0.4 s, worst 0.9 s, none over
+3 s, where 100 reads of the 11 MB feed had taken 2.4 s each.
+
+Nothing about the feed's content changed: same rows, same fields, same bytes after decoding. What
+changed is that five sixths of every feed transfer was the same 4 778 strings being sent again and
+again, and now they are sent once.
+
+<div class="pagebreak"></div>
+
 ## 15. Analysis and Discussion
 
 **The threshold rule does what the task asks and is measurably better than round robin.** At the same
