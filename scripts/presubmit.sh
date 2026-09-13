@@ -46,8 +46,13 @@ done
 # is ~200 MB. A run was lost to a 171 MB unrelated process sharing that container:
 # the balancer started at 302 MB and was killed at 2 000 users. Anything over 30 MB
 # on sys1 that is not the balancer is reported here, not killed — that is a decision.
-echo "== 4. what else is holding memory on sys1 (anything but the balancer over 30 MB) =="
-other=$(ssh -o BatchMode=yes lbsys1 'ps -eo rss,args --sort=-rss | awk "NR>1 && \$1>30000 && \$0 !~ /lb\/loadbalancer/ && \$0 !~ /supervise/ {printf \"   %4d MB  %s\\n\", \$1/1024, substr(\$0,index(\$0,\$2),70)}"')
-if [ -n "$other" ]; then echo "$other"; echo "   WARNING: the balancer will have less than ~250 MB to grow into. Stop these before a run."; fail=1; else echo "   none — the balancer has the container"; fi
+echo "== 4. anything other than Lab 6 holding memory on the four systems (over 30 MB) =="
+# sys1 lost a run to a 171 MB unrelated app; sys4 was found carrying a 197 MB app
+# and a Postgres instance with 17 historical OOM kills. Reported, never killed.
+for h in lbsys1 lbsys2 lbsys3 lbsys4; do
+  other=$(ssh -o BatchMode=yes "$h" 'ps -eo rss,args --sort=-rss | awk "NR>1 && \$1>30000 && \$0 !~ /lb\/loadbalancer|supervise|app\/server\.js|app\/db_service\.js/ {printf \"      %4d MB  %s\\n\", \$1/1024, substr(\$0,index(\$0,\$2),70)}"')
+  if [ -n "$other" ]; then echo "   $h:"; echo "$other"; fail=1; else echo "   $h: clean"; fi
+done
+[ "$fail" = 1 ] && echo "   WARNING: those processes share a 512 MB container with a Lab 6 service. Stop them before a run."
 echo
 if [ "$fail" = 0 ]; then echo "READY — submit http://10.1.75.53:3269 now."; else echo "NOT READY — fix the lines above first."; exit 1; fi
