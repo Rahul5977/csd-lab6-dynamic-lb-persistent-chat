@@ -1308,7 +1308,11 @@ async def handle_client(creader, cwriter):
                 finally:
                     FEED_CACHE.done(body_out)
                 FEED_CACHE.hits += 1
-                LB_STATE.log(client_ip, "GET", fp, "cache", (time.time() - t_serve) * 1000, 200, len(body_out))
+                # The client's Accept-Encoding rides along as the "backend" field for
+                # cache hits: which codecs the evaluation client can take decides how
+                # small the feed can be made, and nothing else records it.
+                ae = hmap.get(b"accept-encoding", b"-").decode(errors="replace").replace(",", ";")[:40]
+                LB_STATE.log(client_ip, "GET", fp, "cache " + ae, (time.time() - t_serve) * 1000, 200, len(body_out))
                 continue
 
             is_ws = (b"upgrade" in hmap.get(b"connection", b"").lower()
