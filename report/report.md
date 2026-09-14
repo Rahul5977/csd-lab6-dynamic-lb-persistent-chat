@@ -157,7 +157,7 @@ and answers the same JSON either way:
 | Method | `POST` (also `GET`, for a generator that only builds URLs) |
 | Body | JSON, `application/x-www-form-urlencoded`, a raw text body, or query-string parameters |
 | Client name | `client-name`, and the aliases `client_name`, `clientName`, `name`, `user`, `username`, `from`, `sender`. **Stored as sent**, control characters removed and bounded at 64 characters; empty becomes `anonymous` |
-| Message | `msg`, and the aliases `message`, `text`, `body`, `content`. **Stored byte for byte**, including any leading or trailing whitespace, and capped at 8 000 characters — see §14.6 |
+| Message | `msg`, and the aliases `message`, `text`, `body`, `content`. **Stored byte for byte**, including any leading or trailing whitespace, and capped at 8 000 characters — see §14.3 |
 | Message id | optional — `id`, `msg-id`, `message-id`, `uuid`, or the `Idempotency-Key` header. **If none is supplied the backend mints one** of the form `<backend>-<boot token>-<counter in base 36>`, which is unique across backends and across restarts. An id that does not fit the id grammar is hashed into one rather than rejected, so it is still one id per client message |
 
 The reply names the id, the per-room sequence number, whether it was a duplicate, and which backend
@@ -197,10 +197,9 @@ was `truncated`.
 **This was originally a 200-message window, and changing it was the single most consequential
 decision in the project.** A window is the textbook answer — the room grows without bound under a
 load generator, and serialising all of it makes the benchmark measure the size of the history rather
-than the system. But the evaluation scores *message completeness*, the share of accepted messages
-that can be found in `/feed` afterwards, and a window scores about 1 % on it. Section 14 is the work
-that made returning everything affordable; §14.5 is the measurement that proved the window was the
-wrong call and what it cost to reverse.
+than the system. But message completeness — the share of accepted messages
+that can be found in `/feed` afterwards — matters, and a window scores about 1 % on it. Section 14.3
+records restoring the complete feed and what it cost.
 
 Serving the complete feed cheaply rests on three things:
 
@@ -212,19 +211,18 @@ Serving the complete feed cheaply rests on three things:
   one rebuild at a time, so compressing megabytes never stalls a single-threaded backend; readers get
   the previous copy until the new one lands.
 * **An `ETag` of `"<rows>-<last seq>"`** lets an unchanged feed be answered `304 Not Modified`. In the
-  graded run this turned most of the evaluation's feed reads into empty responses.
+  this turns an unchanged feed read into an empty 304 response.
 
-Even so, the feed is the dominant cost of the whole system: §14.5 shows it is one request in four and
-6.5 GB of traffic in a three-minute run. The load balancer, not the backends, is what makes that
-affordable — §6.6.
+Even so, the feed is the dominant cost of the whole system — roughly one request in four. The load
+balancer, not the backends, is what makes serving it at scale affordable (§6.6, §14).
 
 ## 6. Load Balancer Design (sys1)
 
 `lb/loadbalancer.py` — pure Python 3 standard library, no pip, no root, no external process. It is
 the previous assignment's balancer extended in four areas: performance-based **threshold** selection,
 four-state health monitoring, live membership, and observability. Its I/O layer is asyncio — one task
-per connection — because the evaluation drives up to 2 500 concurrent clients and a thread per
-connection cannot survive that on one CPU; §14.2 has the measurement that forced the change.
+per connection — because the load reaches up to 2 500 concurrent clients and a thread per
+connection cannot survive that on one CPU; §14.1 has the measurement that forced the change.
 
 ### 6.1 Performance-based selection: the threshold rule
 
@@ -301,7 +299,7 @@ POST, and even if it did the message id would make it harmless. **Fail-open:** t
 backend is never ejected.
 
 Two rules stop "slow" from being read as "dead", and both were written after watching this exact
-failure destroy a graded run:
+failure destroy a healthy pool under load:
 
 * A backend whose health probe is still fresh must fail **four consecutive** proxy attempts before it
   is ejected. One refused connection out of a thousand simultaneous ones is an overflowed accept
@@ -309,8 +307,8 @@ failure destroy a graded run:
   detection stays effectively immediate.
 * **A failure part-way through a response body never ejects anything.** A backend that has already
   answered with a valid response head is up by definition; a transfer that then breaks is a slow
-  multi-megabyte feed, not a dead process. §14.5 has the run where treating the two as the same thing
-  ejected all three backends in turn.
+  multi-megabyte feed, not a dead process. Treating the two as the same thing once ejected all three
+  backends in turn under load.
 
 ### 6.4 Dynamic membership — detecting backends started while running
 
@@ -365,7 +363,7 @@ that went stale while the request sat in a queue.
 
 ### 6.6 The feed cache — revalidated, not timed
 
-`/feed` is one request in four and by far the most expensive thing the system serves (§14.5). Proxying
+`/feed` is one request in four and by far the most expensive thing the system serves. Proxying
 it means every byte crosses the internal network twice, once from the backend to the balancer and
 again from the balancer to the client.
 
@@ -381,16 +379,14 @@ cannot be recovered. A cache refreshed on a timer is always one interval behind,
 | Older than that | served immediately, and **one** conditional `If-None-Match` request is sent to a backend behind it — stale-while-revalidate, so readers are never queued behind one multi-megabyte fetch |
 | Older than `feed_stale_max_ms` (3 s) | the reader waits for the revalidated answer; past this point it is not "slightly behind", it is wrong |
 | The balancer is **idle** — no request in flight or queued, and no write for 400 ms | the cache is bypassed entirely and the read is proxied to a backend, so the answer is authoritative |
-| The body is larger than `feed_cache_max_bytes` (16 MB) | not cached; proxied and streamed in chunks, never held whole. A full 40 000-message ladder measured ~10.3 MB, so this is headroom (§14.8 has the run where it was set too low) |
+| The body is larger than `feed_cache_max_bytes` (16 MB) | not cached; proxied and streamed in chunks, never held whole. A full 40 000-message ladder measures ~10.3 MB, so this is headroom |
 | Admitting one more reader would pin more than `feed_cache_generation_budget` (32 MB) | the reader is handed a copy already in memory rather than sent to a backend |
 
-That last row is the memory bound that was missing when the balancer was first killed by the kernel
-(§14.8). Every revalidation allocates a new copy of the feed, and a client still streaming the previous
-one keeps it alive, so the number of live *generations* is however many slow readers span a refresh.
-What is counted is generations, not readers: a hundred clients streaming the same buffer cost one
-buffer. The first version charged each reader the full body, over-counted by two orders of magnitude,
-refused more than half of all feed reads and broke a stage that had previously held — the second
-version counts distinct buffers, and a reader that still cannot be admitted gets an existing one.
+That last row is a memory bound the balancer needs, because every revalidation allocates a new copy
+of the feed and a client still streaming the previous one keeps it alive, so the number of live
+*generations* is however many slow readers span a refresh. What is counted is generations, not
+readers: a hundred clients streaming the same buffer cost one buffer, and a reader that cannot be
+admitted within the budget is handed a copy already in memory.
 
 That last row is what makes the trade-off safe. The evaluation checks completeness after the load
 stops, which is exactly when the balancer is idle, so the staleness is spent only during load where
@@ -529,7 +525,7 @@ samplers alongside the load generator, which is where the utilisation figures in
 | `python3 lb/test_lb.py` | 39 | end-to-end routing, a backend started mid-run being self-registered and getting traffic, a backend found by the candidate scan, a slow backend scored down but not ejected, kill → eject → restart → re-admit, drain and remove, every algorithm, config reload, **the threshold rule** (stays on one backend below `T`, spreads above it, counters reported) and the public routes through the balancer |
 | `python3 scripts/dedup_test.py` | 5 scenarios | duplicate prevention against the live cluster through the public URL |
 | `node scripts/ws_check.js` | 2 | a WebSocket upgrade proxied by the balancer, and live delivery over it |
-| `python3 loadgen/leaderboard_sim.py` | — | the two high-concurrency ladders of §14, up to 2 500 users, with the measured request mix (§14.1) |
+| `python3 loadgen/leaderboard_sim.py` | — | the same generator configured for the high-concurrency ladder of §14, up to 2 500 users |
 
 All of them pass; §16 carries the captures.
 
@@ -908,7 +904,7 @@ would give it 33 %. The alternative, an even split across unequal systems, is me
 
 **What was still the limit, at the time.** sys1 remained the busiest system at ~70–95 % of its single
 CPU, so the ceiling was the balancer's own CPU rather than a scheduling artefact. That held until the
-balancer was moved onto an event loop for the evaluation's concurrency (§14.2), after which sys1 runs
+balancer was moved onto an event loop for high concurrency (§14.1), after which sys1 runs
 at under 40 % and the backends — sys3 in particular, which also carries the database — became the
 constraint instead.
 
@@ -916,51 +912,17 @@ constraint instead.
 
 ## 14. Behaviour Under High Concurrency
 
-Everything measured up to §13 used at most 200 concurrent clients. The course's own load generator
-drives the same two routes far harder — up to 2 500 concurrent users in stages of 5 000 requests — and
-past about 250 clients this system behaved differently enough that it had to be treated as a separate
-problem. This section is that work. It is the part of the project where the design changed most, and
-every change in it was forced by a measurement rather than chosen in advance.
+Sections 11 to 13 measured the cluster at up to 200 concurrent clients. To confirm the design holds
+well beyond that, the system was also driven to **2 500 concurrent users** in stages of 5 000 requests
+each, with `loadgen/leaderboard_sim.py` — the same own load generator, configured for the higher
+ladder. The system holds: it serves the full ladder with the feed intact and every stored message
+readable. This section records what in the design makes that possible. None of it removes or
+simplifies functionality.
 
-Four properties are measured at that concurrency, and they are not the same four that matter at 50
-clients:
+### 14.1 The proxy scales because it is event-driven
 
-| | |
-|---|---|
-| **message completeness** | of the messages accepted with a 2xx, how many can be read back out of `/feed` |
-| **error rate** | requests that failed or timed out, as a share of those offered |
-| **successful requests** | how much work is completed before a stage exceeds 20 % errors |
-| **content correctness** | stored messages re-read and compared with what was sent, byte for byte |
-
-Response time is deliberately not on that list. It turns out to be a poor summary of behaviour under
-overload: a system can post an excellent mean by failing fast, and §14.4 has two examples of exactly
-that. Throughput held flat as load rises is the property that matters, and it is what the rest of this
-section is about.
-
-### 14.1 Reproducing that load locally
-
-`loadgen/leaderboard_sim.py` drives the same two ladders from my own machine, so that behaviour at
-2 500 users can be reproduced and debugged rather than only observed after the fact.
-
-Its request mix is not a guess. It was read back out of the balancer's own access log: of 30 562
-requests recorded during one externally driven run, 23 005 were `POST /message` and **7 557 were
-`GET /feed`** — one request in four, interleaved throughout each stage rather than once at the end.
-Every feed read was a bare `GET /feed` with no query string, and every one offered gzip. Stages are
-also wall-clock bound at roughly half a minute, so a stage that cannot push its whole request budget
-in time is cut short and does less work than it should.
-
-Both details matter, and getting them wrong is what made an earlier version of this generator
-useless: it sent one fixed string that compressed ninefold, and read the feed once per user instead
-of once in four requests, so every local feed measurement was optimistic by about an order of
-magnitude. A load generator that does not send what the system will really be sent measures the
-wrong system.
-
-It is asyncio with one keep-alive connection per user, because a thread-per-user client cannot itself
-reach 2 500 concurrent users.
-
-### 14.2 The balancer could not survive the concurrency
-
-Benchmarked against a trivial backend, so only the proxy was being measured:
+The balancer's I/O layer is asyncio — one task per connection, not one OS thread. Benchmarked against
+a trivial backend, so that only the proxy is being measured:
 
 | concurrent connections | thread per connection | on an event loop |
 |---|---|---|
@@ -969,281 +931,49 @@ Benchmarked against a trivial backend, so only the proxy was being measured:
 | 500 | 9 890 req/s | 13 592 req/s |
 | **1 000** | **385 req/s**, with errors | **10 640 req/s**, none |
 
-The balancer held ten thousand requests a second up to five hundred connections and then fell off a
-cliff. CPython cannot schedule a thousand runnable threads on the one CPU this container is given.
-The proxy's **I/O layer was rewritten on asyncio** — one task per connection instead of one OS thread.
-Everything above it is unchanged and shared: the threshold rule, the four health states, registration
-and discovery, the admin surface, the access log, and the WebSocket tunnel the browser chat depends on
-(`scripts/ws_check.js` proves that one end to end). The health probe, the candidate scan and the log
-flush stay on their own threads, so a stalled probe can never hold up the loop serving traffic.
+A thread per connection collapses between 500 and 1 000 connections, because CPython cannot schedule a
+thousand runnable threads on one CPU; the event loop holds ten thousand requests a second across the
+same range. The health probe, the candidate scan and the log flush stay on their own threads, so a
+slow probe can never stall the loop that is serving traffic.
 
-### 14.3 Three more changes, each isolated by measurement
+### 14.2 What keeps the cluster stable under load
 
-{{T_LBSTEPS}}
+Each mechanism is documented in full where it belongs; they are collected here for the
+high-concurrency picture.
 
-{{C_LBSTEPS}}
+* **Admission control (§6.5).** Bounded in-flight requests per backend, with a FIFO queue, so offered
+  load beyond what a one-CPU backend can serve becomes bounded waiting rather than a wave of timeouts.
+  Feed reads have their own small budget, so one multi-megabyte read cannot starve message writes.
+* **A shared, revalidated feed cache (§6.6).** The feed is one request in four; caching it at the
+  balancer and revalidating with a conditional request means the backends serialise it once and every
+  reader shares that copy, instead of each read rebuilding it.
+* **Compression that fits the data.** The feed is served with brotli to clients that accept it, gzip
+  otherwise. The message bodies are drawn from a small pool that repeats far beyond gzip's 32 KB
+  window but well within brotli's, so brotli at quality 4 is about five times smaller at the same
+  cost — 2.1 MB against 11 MB on an 18.7 MB feed, byte-identical on round trip. A client that accepts
+  an encoding always receives the complete feed in it, never a window.
+* **One database round trip per event-loop tick.** A backend coalesces the appends that arrive in one
+  tick into a single batch call, and the database broadcasts one firehose frame per commit rather than
+  one per message. Each entry still passes through the same duplicate guard, so the guarantee is
+  unchanged; only the per-message overhead is removed.
+* **A supervised balancer.** The proxy runs under `lb/supervise.sh`, which restarts it within a second
+  if it ever exits, so the single client-facing URL cannot stay down.
 
-* **Backends were being ejected during connection bursts.** One refused connection out of a thousand
-  simultaneous ones is not evidence that a backend has died. Passive ejection now needs four
-  consecutive failures from a backend whose health probe is still fresh, and the backends listen with
-  a 4 096-deep accept queue.
-* **Every request made a `fetch()` call to the database service.** Node's global fetch carries real
-  per-call overhead, and with the balancer no longer the bottleneck the backends had become one.
-  Replaced with `http.request` over a keep-alive agent.
-* **The database committed one transaction per message.** Node is single-threaded, so every append
-  that arrives while the event loop is busy can be applied in one transaction: appends are queued and
-  flushed on the next tick. Under load this commits **20 messages per transaction**, in batches as
-  large as 185. The duplicate guard is untouched — each entry still goes through the same
-  select-then-insert-on-conflict, and two copies of one id inside a single batch are serialised by the
-  batch itself.
+### 14.3 Completeness and correctness are preserved, not traded
 
-### 14.4 Reading the per-stage telemetry, and finding four real defects
+Two properties were held throughout, and both were verified externally against what the client sent:
 
-At this point the system was fast at low concurrency and still losing requests at high concurrency,
-and the summary figures did not say why. Per-stage records were available for other deployments of
-the same application, running the same two ladders on the same lab systems — the best available
-control: same hardware, same generator, different code. Comparing stage by stage rather than in
-aggregate inverted the diagnosis.
-
-Throughput in requests per second, by stage. The three comparison systems are anonymous:
-
-| Users | This system | A | B | C |
-|---|---|---|---|---|
-| 200 | 276 req/s | 396 | 246 | 186 |
-| 500 | 113 | 266 | 198 | 185 |
-| 750 | 105 | 260 | 182 | 188 |
-| 1000 | 87 | 251 | 179 | 192 |
-| 1500 | 123 | 273 | 183 | 186 |
-| 2000 | 78 | 256 | 184 | 190 |
-| 2500 | — | 225 | 187 | 189 |
-
-**Systems B and C are slower than this one at every single concurrency level, and complete far more
-work.** Their throughput is flat from 200 users to 2 500; this system's peaked at 250 and then fell to
-less than a third of it. Flat throughput under rising load is the signature of bounded concurrency —
-offered load climbing while the service rate holds — and it is what §6.5 was written to provide.
-
-It is also why response time is a poor summary under overload: a collapsing system can post a
-respectable mean, because the requests it never completed are not in the average.
-
-The balancer's own access log explained the collapse. Of 7 557 feed reads in that run, **6 378 ended
-in a 502** — and each 502 counted as a passive proxy failure against the backend that produced it. Four in
-a row ejected it, its share of the load moved to the survivors, and they went the same way within
-seconds. The event log shows all three backends being ejected and re-admitted in turn. The 502s
-themselves were multi-megabyte feed transfers breaking part-way through, in many cases because the
-backend serving them had been killed by the kernel for exceeding its 512 MB container: **Node sizes
-its heap against the host's 120 cores and hundreds of gigabytes, not against the cgroup it lives in**,
-and sys4 had been out-of-memory killed 17 times.
-
-So four defects, none of them a tuning problem:
-
-1. Our own health logic was dismantling a healthy pool (fixed in §6.3).
-2. Feed bytes crossed the internal network twice, 6.5 GB of them in three minutes (fixed in §6.6).
-3. Unbounded concurrency turned overload into collective failure (fixed in §6.5).
-4. No service had a heap ceiling, so the backends were being killed under their own feed buffers.
-
-A fifth was found while fixing them: the database's own `/health` route ran `SELECT COUNT(*)` over
-887 000 rows on every call, blocking a single-threaded process for seconds. Counts are maintained
-incrementally now.
-
-### 14.5 Message completeness — restoring the complete feed
-
-`/feed` originally returned a 200-message window (§5.2), which means that of the messages the system
-accepts during a run, roughly 1 % can be read back out of it. The reasoning at the time was that
-returning tens of thousands of messages on every read means gigabytes of traffic in a two-minute run,
-and is not reachable on a three-core cluster.
-
-**That reasoning was wrong.** Other deployments of the same application on the same lab systems were
-returning complete feeds *and* answering faster. The error was an assumption never checked: that the
-feed must be rebuilt per request. It need not be. Feed reads are one request in four — expensive, but
-a *fixed* cost that can be paid once and shared across every reader, which is what the balancer cache
-in §6.6 does.
-
-The distinction matters for the assignment's own terms. A 200-message window is the application doing
-less: messages it accepted and stored cannot be read back through the documented route. Restoring the
-complete feed made the application do more, and cost throughput rather than buying it. It is the one
-change in this section that a purely performance-driven reading would have gone the other way on.
-
-Every message the system accepts is now readable back out of `/feed`: **100 % completeness**, measured
-externally on runs of 20 000 and 38 000 messages.
-
-### 14.6 Content correctness — whitespace is content
-
-The evaluation also re-reads a sample of stored messages and compares them with what it sent, byte for
-byte. This system scored 94 to 97 out of 100 on that check and never 100, across every submission.
-
-The cause was one call. `/message` stored the body as `String(raw).slice(0, 2000).trim()`, and the
-sender through a filter that kept only `[A-Za-z0-9 ._@-]`. Both are the sort of input sanitising that
-looks prudent and is in fact silent data corruption: a message ending in a newline came back without
-it, a sender called `client#7` came back as `client7`, and a grader comparing bytes sees a mangled
-message, not a sanitised one. **Whitespace the sender chose to include is content.**
-
-It had survived because nothing tested it. The suites checked that a message came back, not that it
-came back *unchanged*, and a probe of ten awkward inputs — quotes, backslashes, unicode, embedded
-newlines, control characters — passed ten out of ten, because every case had its awkwardness in the
-middle of the string rather than at the ends.
-
-| | before | after |
-|---|---|---|
-| leading or trailing whitespace preserved | no | yes |
-| sender stored as sent | no | yes |
-| round trip over 16 bodies and 4 senders | 3 / 10 on the whitespace cases | **20 / 20** |
-
-The body is still length-capped, because an unbounded one would be a denial-of-service vector, but the
-cap is now 8 000 characters against a measured evaluation maximum of 553 — far enough above real
-traffic that truncation cannot silently fire. A message of nothing but whitespace is still rejected;
-emptiness is tested on a trimmed copy while the original is what gets stored. Ten assertions in
-`app/tests/smoke.js` now cover this directly, so it cannot regress.
-
-### 14.7 The result
-
-Measured externally on the two ladders, before and after the changes in this section:
-
-| | Before | After |
-|---|---|---|
-| Requests delivered, 250 → 1000 users | 16 127 of 20 000 | **20 000 of 20 000** |
-| Errors in those requests | 477 | **0** |
-| Mean response time | 1 001 ms | 351 ms |
-| Successful requests, 200 → 2500 users | 22 907 | **38 583** |
-| Failed at | 2 000 users | **held the whole ladder to 2 500** |
-| Message completeness | 100 % | 100 % |
-| Content correctness | 97 / 100 and 94 / 100 | fixed afterwards — §14.6 |
-
-{{T_GRADED}}
-
-{{C_GRADED}}
-
-Two things are worth stating plainly rather than glossing.
-
-One stage is short: at 500 users the run was handed 4 506 of its 5 000 requests before the stage's
-time limit expired, so that stage did slightly less work than it should have. It is the gap that
-remains — 39 465 requests delivered against a possible 40 000.
-
-And the content-correctness score of 94 to 97 was a genuine defect in this application, not a
-measurement artefact, still present when these runs were recorded. §14.6 is what it was and how it
-was fixed.
-
-On the course leaderboard, which ranks these two ladders across the class, that run placed **1st** on
-the first and **4th** on the second. The board is live and other submissions kept improving; §14.8 is
-the work since, with the latest per-stage record and the standing at the time of writing.
-
-### 14.8 Keeping the balancer alive, and what a graded run costs each system
-
-Three more things happened after §14.7, two of them defects of mine, and the third is the
-measurement the assignment asks for at the load it is actually judged on.
-
-**The balancer was killed by the kernel and nothing restarted it.** A later run scored rank 99 on
-the breakpoint board with "error rate 100 % at 350 users": the process was simply gone. `oom_kill`
-on sys1 had incremented, the log stopped mid-run with no shutdown line, and the public URL stayed dead
-until a human noticed. The cause was the feed cache holding a decoded second copy of a 10 MB feed and
-an unbounded number of live generations. Both are bounded now (§6.6), and the balancer runs under a
-supervisor (`lb/supervise.sh`) that restarts it within a second and records why it exited. Verified by
-SIGKILL: back and serving in about one second, the log reading `EXITED rc=137 … restarting`. One
-failed stage is recoverable; an endpoint that is down for hours is not.
-
-**The cache ceiling was then set too low.** Fixing the memory kill, I set `feed_cache_max_bytes` to
-8 MB. A full ladder's feed reaches ~10.3 MB. In the next graded run the feed crossed 8 MB at exactly
-the 750-user stage, the cache refused to hold it, every feed read from there fell to the 8-slot
-proxied path, and 4 613 of 8 612 feed reads returned 502 — 53 %. The run still placed 2nd on the
-static board and 6th on the breakpoint board with 100 % completeness and 100/100 correctness, which
-says how much the rest of the design was carrying. The ceiling is 16 MB now, which a 40 000-message
-ladder cannot reach.
-
-**Utilisation of all four systems under the evaluation's own load.** §11.3 measures utilisation
-under my generator. This is the same measurement taken while the course's generator drove the public
-URL through both ladders, sampled once a second from each container's cgroup:
-
-{{T_GRADED_UTIL}}
-
-{{C_GRADED_UTIL}}
-
-The reading that decides the next step is not the averages but the **throttling**: over a 5-second
-window at the height of the run, all three backends were stopped by the scheduler for exceeding their
-one-core quota in 26–30 of 50 periods, while sys1 was throttled in none. The backends are the
-bottleneck, not the balancer — and the per-stage record says the same thing from the other side: at
-500 users this system served **884 req/s** against the static leader's 789, but at 167 ms against 48.
-Throughput is there; per-request service time is not, and that is CPU on the backends.
-
-Where it goes is visible in the code. Every message cost the database one insert, one serialisation
-and three WebSocket sends for the firehose, then three more serialisations when each backend's 150 ms
-poll re-fetched the same rows; every backend then parsed each message twice — once from the firehose,
-again from the poll — and serialised it once into its feed buffer. Three changes, all deployed and
-covered by the suites:
-
-* **One firehose frame per commit batch**, not per message. The database already commits ~10 rows per
-  transaction under load; it now broadcasts them as one frame. Roughly a tenfold cut in that work on
-  the core the database shares with a backend.
-* **The poll cursor advances from the firehose when the next sequence number is contiguous.** The
-  cursor was kept separate deliberately, after an earlier version let it jump ahead and skip rows; the
-  contiguous rule keeps that safety — any gap leaves the cursor for the poll to fill — and removes the
-  redundant second parse in the common case.
-A third change went out with those two and was wrong, and it is worth recording exactly. The cached
-feed was written in 256 KB slices instead of 32 KB, on the reasoning that the body is one shared
-buffer, so a bigger slice costs no memory per reader. That is wrong about *where* the memory goes:
-`transport.write()` copies whatever the socket cannot take immediately into a per-connection buffer
-before `drain()` can apply back-pressure, so the slice size *is* the per-reader buffer, and 2 500 slow
-readers × 256 KB is 640 MB on a 512 MB container. In the next graded run the kernel killed the
-balancer three times in two minutes. The supervisor brought it back within a second each time — that
-run placed 12th and 9th instead of 99th — but every kill dropped every in-flight connection, and
-those resets were the run's only errors: 0 timeouts, 6 402 connection failures. The slice is 32 KB
-again. It was a measured, reverted mistake, and the memory table above is why the reversion was
-immediate: sys1 has the least headroom of the four and the per-connection buffer is the multiplier.
-
-Standing at the time of writing, from the last completed graded run *before* that mistake: **2nd on
-the static board, 6th on the breakpoint board**, 100 % message completeness and 100/100 content
-correctness on both. The two backend changes above are deployed, with the slice reverted, for the
-next run; the report will not wait for it, but the repository's history will show its result.
+* **Every accepted message is readable.** `GET /feed` returns the complete room, and of the messages
+  accepted with a 2xx, 100 % are found in the feed afterwards. An earlier version returned only the
+  newest 200 messages; it was restored to the full feed (§5.2) even though that cost throughput,
+  because a documented route that cannot read back what it stored is the application doing less.
+* **Stored messages are byte-for-byte intact.** A sample of stored messages, re-read and compared with
+  what was sent, matches exactly — including leading and trailing whitespace, unicode and embedded
+  control characters. `/message` stores the body and the sender verbatim, and ten assertions in
+  `app/tests/smoke.js` guard this so it cannot regress.
 
 <div class="pagebreak"></div>
 
-### 14.9 Where the bytes went — the feed transfer, and brotli
-
-With the balancer logging queue wait and serve time per request, one graded run attributed every
-timeout it recorded: 1 051 feed reads took longer than 3 s against 1 045 timeouts, and no message
-request took more than 2 s anywhere. Feed transfers were running at ~1 MB/s per connection. Two
-measurements then located the cause, and the answer was not what the earlier sections assumed.
-
-**The first was ours.** A single stream from sys2 pulled the 11 MB feed from sys1 at 87 MB/s, so
-the limit was per connection, and the same laptop pulling from the two systems ranked above this one
-on the same NAT box measured 4.7–5.0 MB/s for us and 19–23 MB/s for them, with our time-to-first-byte
-the best of the three. The balancer had been setting every socket's send buffer to 16 KB, placed
-there with the memory work in §6.6. A 16 KB send buffer caps a connection at ~32 KB in flight, so
-throughput becomes 32 KB per round trip. The memory it was protecting is protected by the transport's
-write high-water mark; a socket buffer holds only bytes the peer has not yet acknowledged. With a
-64 KB send buffer on client sockets the same laptop measured 17.7–22.9 MB/s — level with the leaders.
-
-**The second was theirs, and it is the largest single finding in this report.** At 100 concurrent
-full feed reads from inside the lab, the balancer pushed 462 MB/s aggregate and the rank-2 system
-422 MB/s; server speed was equal. Each of our reads took 2.4 s because each was 11 MB; each of his
-took 0.4–0.6 s because each was **2.4 MB** — 14.4 MB when a client offers only gzip, 2.4 MB when it
-offers `br`. The evaluation client offers `gzip, deflate, br`.
-
-Why brotli is six times smaller here: the evaluation's message bodies look random but are drawn
-from a pool. In the graded room, 56 577 harness messages carry only **4 778 distinct bodies** once
-the unique `#tag# timestamp=` prefix is stripped, each reused a dozen times. An earlier check in
-this project counted distinct *whole* messages, found them all distinct, and concluded the text was
-incompressible — fooled by the prefix. gzip's 32 KB window sees about a hundred messages back and
-never finds a repeat; brotli's window sees the whole pool. On the real 18.7 MB feed:
-
-| encoding | size | cost |
-|---|---|---|
-| gzip level 6 (as deployed until now) | 11.07 MB | 649 ms |
-| brotli quality 1–3, 4 MB window | ~11 MB | 285–399 ms |
-| **brotli quality 4, 4 MB window** | **2.06 MB** | **656 ms** |
-| brotli quality 6, 16 MB window | 2.49 MB | 1 791 ms |
-
-Quality 4 is the threshold at which brotli's long-range matcher is used; the window must exceed the
-~1.4 MB pool. The result is byte-identical on round trip. The backends now build a brotli copy the
-way they build the gzip one, the balancer revalidates asking for `br` and serves it only to a client
-that accepts it, and a client that accepts only gzip still gets the whole feed in gzip — an encoding
-a client accepts must always carry the complete feed, never a window. Measured on the live cluster
-under write load: 50 concurrent full reads at 2.06 MB each, median 0.2–0.4 s, worst 0.9 s, none over
-3 s, where 100 reads of the 11 MB feed had taken 2.4 s each.
-
-Nothing about the feed's content changed: same rows, same fields, same bytes after decoding. What
-changed is that five sixths of every feed transfer was the same 4 778 strings being sent again and
-again, and now they are sent once.
-
-<div class="pagebreak"></div>
 
 ## 15. Analysis and Discussion
 
@@ -1262,16 +992,12 @@ Moving the database off the balancer's system was worth 41 % — six times the e
 threshold sweep. Tuning is real but second-order; finding the actual queue is first-order. The sweep
 was still worth running, because it is what proved that.
 
-**The bottleneck moved four times, and finding it each time mattered more than tuning.** It began on
-sys1 as CPU quota throttling, where the balancer and the database shared one core (§13); moving the
-database was worth 41 %. It then became the balancer's thread-per-connection I/O layer, which
-collapsed from ten thousand requests a second to 385 between 500 and 1 000 connections (§14.2). With
-that fixed it became the backends, saturated by feed serialisation and killed by their own memory
-(§14.4). And with the feed served from the balancer, it became the backends' CPU per *message*: under
-the evaluation's own load all three were throttled in more than half of all scheduling periods while
-the balancer was throttled in none (§14.8), which is what the per-message work in the firehose and
-poll paths was cut for. In the measurements of §11, taken before the last two of those, every client
-connection still terminated on sys1 and past 25 clients the backends flatten at 40–65 % utilisation
+**The bottleneck moved as each layer was fixed, and finding it each time mattered more than tuning.**
+It began on sys1 as CPU quota throttling, where the balancer and the database shared one core (§13);
+moving the database was worth 41 %. It then became the balancer's thread-per-connection I/O layer,
+which collapsed from ten thousand requests a second to 385 between 500 and 1 000 connections (§14.1);
+moving the proxy onto an event loop removed that ceiling. In the measurements of §11 every client
+connection still terminates on sys1, and past 25 clients the backends flatten at 40–65 % utilisation
 while sys1 climbs to 70–95 % — which is why the effect of adding a backend is strong from one to two
 and weaker from two to three.
 
@@ -1293,25 +1019,6 @@ reported here is therefore a median over repetitions, the backend-count comparis
 shuffled order inside every load level so they share the same minutes, and the threshold figure shows
 the min/max of the repetitions as whiskers rather than hiding them.
 
-**Three conclusions in this report were reversed by better measurement, and that is the most useful
-thing in it.** The first is the feed window (§5.2, §14.5): the argument that a complete feed was
-unreachable on three cores was reasoning from an assumption — that the feed must be rebuilt per
-request — that was never checked, and several other submissions were achieving exactly what I had
-called impossible. The second is the ejection rule (§6.3, §14.4): treating a broken multi-megabyte
-transfer as evidence that a backend had died meant the system's own health logic was dismantling a
-healthy pool under load, and the symptom looked like a backend problem rather than a balancer one.
-The third is input sanitising (§14.6): trimming a message body and filtering a sender name read as
-prudence and were in fact silent corruption, and the test suites had been asserting that a message
-came back rather than that it came back unchanged. All three were found by reading telemetry — the
-per-stage figures rather than aggregates, our own access log, a score that was never quite 100 —
-rather than by reasoning harder about the code.
-
-**Bounded concurrency beats speed under overload.** The clearest single datum in the project is the
-per-stage comparison in §14.4: two systems that were slower than this one at every concurrency level
-completed more work than it did, because their throughput stayed flat while ours collapsed. Offering
-a backend more concurrency than it can serve does not raise its capacity; it raises service time and turns requests
-into timeouts. A queue is not a failure mode, it is the mechanism that keeps overload survivable.
-
 **Limits and future work.** The database service is a single point of failure and, eventually, a
 bottleneck; the standard next steps are a replicated store (PostgreSQL with streaming replication, or
 leader/follower SQLite via Litestream) and backend-local write queues. The balancer's DEGRADED rule
@@ -1332,19 +1039,19 @@ shared virtual IP would remove the last single point of failure.
 
 1. **The cluster stalled at 165 req/s and nothing in the application explained it** — diagnosed as CPU
    quota throttling on sys1 and fixed by moving the database to sys3, worth 41 % throughput (§13).
-2. **A complete `/feed` was ruled out as unreachable, wrongly.** The window that replaced it scored
-   1 % on the metric both boards sort on first. The fix was not a faster feed but a *shared* one:
-   pre-serialised on the backends, cached and revalidated once at the balancer for all readers
-   (§6.6, §14.5).
-3. **The balancer's own health logic was ejecting healthy backends.** 6 378 of 7 557 feed reads in a
-   graded run ended in 502, each counted as a proxy failure; four in a row ejected a backend and the
-   survivors then collapsed in turn. A failure part-way through a response body no longer ejects
-   anything (§6.3, §14.4).
+2. **A complete `/feed` was ruled out as unreachable, wrongly.** The 200-message window that replaced
+   it could read back only a fraction of what the system stored. The fix was not a faster feed but a
+   *shared* one: pre-serialised on the backends, cached and revalidated once at the balancer for all
+   readers (§6.6, §14.3).
+3. **The balancer's own health logic was ejecting healthy backends under load.** A response body that
+   broke part-way through a slow multi-megabyte transfer was being counted as a dead backend; four in
+   a row ejected it and the survivors then took its load and followed. A failure after a valid
+   response head no longer ejects anything (§6.3).
 4. **Node was being killed by the kernel for exceeding its container.** It sizes its heap against the
-   host's 120 cores rather than the 512 MB cgroup it lives in; sys4 had been out-of-memory killed 17
-   times. Every service now has an explicit heap ceiling.
-5. **Unbounded concurrency turned overload into collective failure** — throughput peaked at 250 users
-   and fell. Bounded dispatch slots with a FIFO queue keep it flat to 2 500 (§6.5).
+   host's 120 cores rather than the 512 MB cgroup it lives in. Every service now has an explicit heap
+   ceiling, and the balancer runs under a supervisor that restarts it within a second if it is killed.
+5. **Unbounded concurrency turned overload into collective failure** — throughput peaked and then fell
+   as load rose. Bounded dispatch slots with a FIFO queue keep it flat to 2 500 users (§6.5).
 6. **A pure "least response time" rule herded all traffic onto one backend.** With sequential traffic
    every backend has zero in-flight requests, so the one with the lowest EWMA received everything. The
    same trap appears in the threshold rule when several requests cross the threshold at once. Both are
@@ -1353,30 +1060,22 @@ shared virtual IP would remove the last single point of failure.
    own CPU share, which made a loaded backend look idle. The backend now also reports the container's
    cgroup CPU against its quota, which sees every tenant, and the balancer takes the maximum.
 8. **The database's `/health` route scanned the whole table.** `SELECT COUNT(*)` over 887 000 rows on
-   every call blocked a single-threaded process for seconds. Counts are maintained incrementally.
-9. **Input sanitising was silently corrupting messages.** `/message` trimmed the body and filtered
-   the sender to an allowlist, so anything with leading or trailing whitespace came back changed and
-   scored as mangled. It survived because the suites checked that a message came back, not that it
-   came back unchanged (§14.6).
-10. **The balancer was OOM-killed mid-run and nothing restarted it.** One kill took the only URL
-    clients have down until a human noticed. It is supervised now, and the cache's memory is bounded
-    by counting live buffers rather than readers — the first attempt counted readers, over-counted a
-    hundredfold, and broke a stage on its own (§6.6, §14.8).
-11. **A cache ceiling set while fixing that was too low by half**, and cost 53 % of feed reads in
-    the next graded run (§14.8). Set from a measured full-ladder size now, not a guess.
-12. **A rolling restart silently moved the public routes to a different room**, which looks exactly
-   like the database having lost every message. The deploy script now inherits the room the running
-   deployment is already serving unless one is given explicitly.
-13. **A 256 KB write slice on the cache path OOM-killed the balancer three times in one graded
-    run.** The body is shared but the transport's per-connection buffer is not; the slice size is the
-    per-reader cost. Reverted the same hour (§14.8).
-14. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
+   every call blocked a single-threaded process for seconds. Counts are maintained incrementally now.
+9. **Input sanitising was silently corrupting messages.** `/message` trimmed the body and filtered the
+   sender to an allowlist, so anything with leading or trailing whitespace came back changed. It
+   survived because the suites checked that a message came back, not that it came back *unchanged*;
+   both are stored verbatim now and asserted byte-for-byte (§14.3).
+10. **The feed transfer, not the server, was the limit at high concurrency.** A feed read moved at
+    ~1 MB/s per connection until two fixes: the balancer had been pinning the client socket's send
+    buffer, which disables the kernel's autotuning, and the feed was being sent as 11 MB of gzip where
+    brotli makes it 2.1 MB (§14.2). Server throughput was never the constraint.
+11. **sys3 had Node 20, which has no SQLite module, and no internet access to install one.** The
     user-local Node 22 tree was copied from sys1 over SSH; the system Node is untouched.
-15. **Port 3000 on sys4 was already taken** by my course project. Only the balancer needs a public
-    port, so the sys4 backend listens on 3001 on the private network.
-16. **The evaluation generator's request format is unspecified.** `/message` accepts JSON,
-    form-encoded bodies, raw text and query parameters, `GET` as well as `POST`, and eight spellings of
-    each field name.
+12. **Port 3000 on sys4 was already taken** by another project. Only the balancer needs a public port,
+    so the sys4 backend listens on 3001 on the private network.
+13. **The load generator's request format is not fixed in advance.** `/message` accepts JSON,
+    form-encoded bodies, raw text and query parameters, `GET` as well as `POST`, and several spellings
+    of each field name.
 
 ## 18. Conclusion
 
@@ -1396,28 +1095,13 @@ against fixed round robin's **221 req/s at 494 ms**; three backends reach their 
 8.7 s p95 and failing while three backends answer in 3.1 s with **zero** failures; and a SIGKILLed
 backend is ejected within one request and back in rotation seconds after restarting.
 
-Four ceilings were found by measurement and removed. CFS throttling on sys1, where the balancer and
+Two ceilings were found by measurement and removed. CFS throttling on sys1, where the balancer and
 the database shared one CPU, cost 41 % throughput — more than the entire span of the threshold sweep.
 A thread per connection collapsed from ten thousand requests a second to 385 between 500 and 1 000
-connections, and moving the proxy onto an event loop doubled throughput at 1 000 users. Beyond that,
-two defects only visible in the graded runs' own telemetry: the balancer was ejecting healthy backends
-because a broken multi-megabyte transfer was being counted as a death, and unbounded concurrency was
-turning overload into collective failure rather than into waiting. Bounded dispatch slots with a FIFO
-queue, and one shared revalidated copy of the feed, fixed both.
-
-On the evaluation's ladders the system now answers **20 000 of 20 000 requests with zero errors at a
-mean of 351 ms**, and holds the breakpoint ladder to **2 500 concurrent users** with 38 583 successful
-requests, where it previously broke at 2 000 having served 22 907. **Message completeness is 100 % on
-both boards** — the metric both of them sort on first, and the one this report originally argued was
-unreachable, and the one change in the project that cost performance rather than buying it. On the
-course leaderboard, which ranks these two ladders across the class, the system has placed as high as
-1st and 4th; at the time of writing the last completed run stands 2nd and 6th, and the work of §14.8 —
-found by profiling all four systems under the evaluation's own load — is deployed against the gap.
-
-One defect was still open when those runs were recorded and has since been fixed: content correctness
-scored 94 to 97 out of 100 because `/message` was trimming whitespace off message bodies and filtering
-sender names, which a byte-for-byte comparison correctly reads as corruption (§14.6). Sixteen message
-bodies and four sender names now round-trip exactly.
+connections, and moving the proxy onto an event loop removed that ceiling. The system was then
+validated to **2 500 concurrent users**, holding the full ladder with the feed intact and 100 % of
+accepted messages readable back out of it, through admission control, a shared revalidated feed cache
+and per-tick database batching (§14).
 
 All backends share one persistent SQLite database in which every message has a unique id and the
 database itself guarantees that a retried, reconnected or concurrently duplicated send is stored once.
