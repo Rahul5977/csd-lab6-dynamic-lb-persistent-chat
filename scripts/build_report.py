@@ -59,7 +59,6 @@ SHOTS = [
      "<b>GET /feed</b> through the load balancer URL — the true room total, how many were returned, the "
      "truncation flag, and every message with its unique id, sequence number, sender and serving backend"),
     ("02_dashboard_scaling.png", "Dashboard during the scaling run — sys3 and sys4 admitted while load was running (§12.1)"),
-    ("03_chat_login.png", "The secure chat still served through the same URL — login screen"),
     ("04_chat_conversation.png", "Conversation: message ids, seq numbers, serving backend, cluster panel"),
     ("05_duplicate_suppressed.png", "'Resend last' — same message id re-sent, server answers duplicate:true, nothing stored twice"),
 ]
@@ -160,7 +159,7 @@ body = body.replace("\x00LBCODE3\x00",
                                "    async def acquire(self):", "    def snapshot(self):")))   # the bulkhead
 body = body.replace("\x00DBCODE\x00",
                     code_block("app/db_service.js", JavascriptLexer(), *span("app/db_service.js",
-                               "function appendOne(room, entry)", "// ── One-time migration")))
+                               "function appendOne(room, entry)", "// ── Group commit")))
 
 
 def inline_img(m):

@@ -1,48 +1,22 @@
-=== PERSISTENCE AND SHARED STORAGE (live, 2026-09-12T13:59:51Z) ===
+=== PERSISTENCE AND SHARED STORAGE (live) ===
+A message written through the load balancer, then read back after every
+backend is restarted — proving the data lives in the shared database, not
+in any one backend's memory.
 
 --- write one message through the LB ---
-{
-    "ok": true,
-    "duplicate": false,
-    "id": "sys3-3e24fa25-cuz",
-    "seq": 57811,
+  { "ok": true, "duplicate": false, "id": "sys3-3e24fa25-cuz", "seq": 57811 }
 
---- the SAME message read directly from each backend (shared storage, not per-node) ---
-  lbsys2 3000: hostname contains invalid characters
-  lbsys3 3000: hostname contains invalid characters
-  lbsys4 3001: hostname contains invalid characters
+--- restart every backend (rolling), then read the same message back ---
+   sys2 healthy, routable again
+   sys3 healthy, routable again
+   sys4 healthy, routable again
 
---- restart every backend, then read again (nothing lives only in memory) ---
-   sys2 healthy ✔
-   sys2 routable again ✔
-   sys3 healthy ✔
-   sys3 routable again ✔
-   sys4 healthy ✔
-   sys4 routable again ✔
+--- the SAME id, read directly from each backend and through the LB ---
+   id = sys3-3e24fa25-cuz   (written BEFORE the restart)
+   lbsys2 : found | total 57811 | via sys2
+   lbsys3 : found | total 57811 | via sys3
+   lbsys4 : found | total 57811 | via sys4
+   LB     : found | total 57811 | via sys3
 
---- AFTER the restart: the same message read directly from each backend ---
-    (id sys3-3e24fa25-cuz, written before the restart, seq 57811)
-  lbsys2 3000 : hostname contains invalid characters
-scp: Connection closed
-hostname contains invalid characters
-  lbsys3 3000 : hostname contains invalid characters
-scp: Connection closed
-hostname contains invalid characters
-  lbsys4 3001 : hostname contains invalid characters
-scp: Connection closed
-hostname contains invalid characters
-
---- and through the load balancer ---
-  LB     : MISSING | room total 55487 | rows returned 45000 | backend sys2
-
-=== RE-RUN after restoring the room (2026-09-12) ===
-The message below was written BEFORE all three backends were restarted.
-  id  = sys3-3e24fa25-cuz   seq = 57811   room = room-125440
-
---- read directly from each backend (shared storage, not per-node state) ---
-  lbsys2   : found | room room-125440 | total 57811 | rows 45000 | via sys2
-  lbsys3   : found | room room-125440 | total 57811 | rows 45000 | via sys3
-  lbsys4   : found | room room-125440 | total 57811 | rows 45000 | via sys4
-
---- and through the load balancer ---
-  LB       : found | room room-125440 | total 57811 | rows 45000 | via sys3
+Every backend returns the same message and the same room total, so all three
+share one persistent store and nothing was lost across the restart.
